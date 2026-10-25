@@ -67,6 +67,7 @@ export function useResendInvitation() {
 
 /** Build the absolute invitation acceptance URL for copy/share. */
 export function invitationLink(token: string): string {
-  const base = import.meta.env.VITE_APP_URL || window.location.origin;
+  const base = import.meta.env.VITE_APP_URL ||
+    window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
   return `${base.replace(/\/$/, '')}/accept-invitation?token=${token}`;
 }

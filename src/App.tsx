@@ -117,7 +117,10 @@ const router = createBrowserRouter([
 
   // Catch-all
   { path: '*', element: <Navigate to="/" replace /> },
-]);
+], {
+  // Lets the app live under a sub-path such as /volttrack/ on GitHub Pages.
+  basename: import.meta.env.BASE_URL.replace(/\/$/, '') || '/',
+});
 
 export default function App() {
   return <RouterProvider router={router} />;

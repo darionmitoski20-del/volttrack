@@ -23,7 +23,7 @@ export function ForgotPassword() {
   const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
     try {
-      const redirectTo = `${import.meta.env.VITE_APP_URL || window.location.origin}/reset-password`;
+      const redirectTo = `${import.meta.env.VITE_APP_URL || window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '')}/reset-password`;
       const { error } = await supabase.auth.resetPasswordForEmail(values.email, { redirectTo });
       if (error) throw error;
       setSent(true);

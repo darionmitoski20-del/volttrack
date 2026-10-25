@@ -21,16 +21,16 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title || 'VoltTrack', {
       body,
-      icon: '/volt.svg',
-      badge: '/volt.svg',
-      data: { url: url || '/' },
+      icon: new URL('volt.svg', self.registration.scope).href,
+      badge: new URL('volt.svg', self.registration.scope).href,
+      data: { url: new URL((url || '/').replace(/^\//, ''), self.registration.scope).href },
     }),
   );
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
+  const url = event.notification.data?.url || self.registration.scope;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
