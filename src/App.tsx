@@ -6,7 +6,6 @@ import { AppShell } from '@/components/layout/AppShell';
 // Auth pages
 import { SignIn } from '@/pages/auth/SignIn';
 import { CreateCompany } from '@/pages/auth/CreateCompany';
-import { ForgotPassword } from '@/pages/auth/ForgotPassword';
 import { ResetPassword } from '@/pages/auth/ResetPassword';
 import { AcceptInvitation } from '@/pages/auth/AcceptInvitation';
 
@@ -48,7 +47,6 @@ const router = createBrowserRouter([
   // Public / auth routes
   { path: '/signin', element: <SignIn /> },
   { path: '/create-company', element: <CreateCompany /> },
-  { path: '/forgot-password', element: <ForgotPassword /> },
   { path: '/reset-password', element: <ResetPassword /> },
   { path: '/accept-invitation', element: <AcceptInvitation /> },
 
