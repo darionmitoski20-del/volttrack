@@ -167,7 +167,8 @@ function NoPlan({ jobSiteId, isOwner }: { jobSiteId: string; isOwner: boolean })
           <>
             <p className="text-sm text-ink-muted">
               Upload the project PDF (exported from AutoCAD / Bluebeam). Plan Reader finds the power, lighting, low-voltage and fire-alarm
-              sheets, counts every device and assigns it to a room. It takes about a minute.
+              sheets, counts every device and assigns it to a room. It takes about a minute. PDFs over 49 MB are read
+              too, but the original file is not stored (Supabase Free limit), so "Open PDF" will not be available.
             </p>
             <UploadBox jobSiteId={jobSiteId} label="Upload and read" />
           </>

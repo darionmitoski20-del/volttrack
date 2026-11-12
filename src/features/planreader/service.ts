@@ -5,6 +5,8 @@ import baseLibrary from './library.json';
 import { loadPdfjs } from './pdfjs';
 
 export const BUCKET = 'plans';
+/** Supabase Free allows 50 MB per uploaded file. */
+export const MAX_PDF_BYTES = 49 * 1024 * 1024;
 
 /** Built-in symbols plus the ones this company taught the reader. */
 export async function companyLibrary(companyId: string): Promise<Library> {
@@ -81,14 +83,19 @@ export async function uploadPlan(opts: {
   if (vErr) throw vErr;
 
   try {
-    onProgress('Uploading PDF…', 1);
-    const pdfPath = `${base}/plan.pdf`;
-    const up = await supabase.storage.from(BUCKET).upload(pdfPath, file, { contentType: 'application/pdf', upsert: true });
-    if (up.error) throw up.error;
-
     onProgress('Loading the PDF reader…', 2);
     const [pdfjs, lib, bytes] = await Promise.all([loadPdfjs(), companyLibrary(companyId), file.arrayBuffer()]);
     const result = await readPlan(pdfjs, new Uint8Array(bytes), lib, (m, p) => onProgress(m, 2 + p * 0.85));
+
+    // The original PDF is kept for "Open PDF" when storage allows it (Supabase Free: 50 MB per file).
+    // Reading never depends on it: sheets and devices are saved either way.
+    let pdfPath: string | null = null;
+    if (file.size <= MAX_PDF_BYTES) {
+      onProgress('Saving the original PDF…', 87);
+      const path = `${base}/plan.pdf`;
+      const up = await supabase.storage.from(BUCKET).upload(path, file, { contentType: 'application/pdf', upsert: true });
+      if (!up.error) pdfPath = path;
+    }
 
     onProgress('Saving sheet images…', 88);
     const sheetRows = [];
@@ -169,8 +176,8 @@ export async function uploadPlan(opts: {
     onProgress('Done', 100);
     return done;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await supabase.from('plan_versions').update({ status: 'error', error: msg }).eq('id', version.id);
+    // nothing half-saved stays behind: the version (and its sheets/devices, by cascade) is removed
+    await supabase.from('plan_versions').delete().eq('id', version.id);
     throw e;
   }
 }
