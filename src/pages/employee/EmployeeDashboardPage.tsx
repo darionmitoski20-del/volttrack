@@ -129,7 +129,7 @@ export function EmployeeDashboardPage() {
       {/* Recent shifts — last 3, tap to edit */}
       <Card>
         <CardHeader className="flex items-center justify-between">
-          <CardTitle>Recent Logs</CardTitle>
+          <CardTitle>Recent Hours</CardTitle>
           <Link to="/me/time-entries" className="text-sm font-medium text-navy-700 hover:text-ink">
             View all
           </Link>

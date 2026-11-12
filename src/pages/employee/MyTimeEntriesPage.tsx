@@ -187,7 +187,7 @@ export function MyTimeEntriesPage() {
   return (
     <div>
       <PageHeader
-        title="Work Logs"
+        title="My Hours"
         subtitle={`${rows.length} entries · ${formatDuration(totalMins)}${totalPay != null ? ` · ${formatMoney(totalPay)}` : ''}`}
         actions={
           <Button variant="secondary" size="sm" icon={<FileText className="h-4 w-4" />} onClick={() => setShowPdf(true)}>

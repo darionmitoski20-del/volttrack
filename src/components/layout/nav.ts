@@ -40,7 +40,7 @@ const OWNER_NAV: NavItem[] = [
 
 const EMPLOYEE_NAV: NavItem[] = [
   { to: '/me', label: 'Home', icon: LayoutDashboard, end: true },      // [0]
-  { to: '/me/time-entries', label: 'Logs', icon: Clock },              // [1]
+  { to: '/me/time-entries', label: 'My Hours', icon: Clock },              // [1]
   { to: '/me/timesheets', label: 'Timesheets', icon: CalendarCheck },  // [2]
   { to: '/me/calendar', label: 'Calendar', icon: CalendarDays },       // [3]
   { to: '/me/job-sites', label: 'Job Sites', icon: MapPin },           // [4]
