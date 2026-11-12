@@ -255,6 +255,97 @@ export interface InvitationPreview {
   company_name?: string;
 }
 
+
+// -- Plan Reader -------------------------------------------------------------
+
+export type PlanVersionStatus = 'processing' | 'done' | 'error';
+
+export interface PlanVersion {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  n: number;
+  file_name: string;
+  pdf_path: string | null;
+  status: PlanVersionStatus;
+  sheet_count: number;
+  item_count: number;
+  diff: PlanDiff | null;
+  error: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PlanDiffRow { sheet: string; room: string; name: string; n: number }
+export interface PlanDiff {
+  prev: number | null;
+  matched: number;
+  added: PlanDiffRow[];
+  removed: PlanDiffRow[];
+  removed_done: PlanDiffRow[];
+}
+
+export interface PlanSheet {
+  id: string;
+  company_id: string;
+  version_id: string;
+  page: number;
+  number: string;
+  title: string | null;
+  discipline: string;
+  floor: string;
+  level: number;
+  width: number;
+  height: number;
+  image_path: string | null;
+  offset_x: number;
+  offset_y: number;
+}
+
+export type PlanItemSource = 'symbol' | 'text' | 'manual';
+
+export interface PlanItem {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  version_id: string;
+  uid: string;
+  sheet: string;
+  cls: string;
+  name: string;
+  x: number;
+  y: number;
+  room: string;
+  existing: boolean;
+  conf: number | null;
+  src: PlanItemSource;
+  grp: string | null;
+  dims: number[] | null;
+  feat: string | null;
+  crop: string | null;
+}
+
+export interface PlanWork {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  item_uid: string;
+  done: boolean;
+  user_id: string;
+  created_at: string;
+}
+
+export interface PlanSymbol {
+  id: string;
+  company_id: string;
+  grp: string;
+  cls: string;
+  dims: number[];
+  feat: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 type Row<T> = T;
 type Insert<T> = Partial<T>;
 type Update<T> = Partial<T>;
@@ -286,6 +377,11 @@ export interface Database {
       chat_reactions: TableDef<ChatReaction>;
       employee_rates: TableDef<EmployeeRate>;
       push_subscriptions: TableDef<PushSubscriptionRow>;
+      plan_versions: TableDef<PlanVersion>;
+      plan_sheets: TableDef<PlanSheet>;
+      plan_items: TableDef<PlanItem>;
+      plan_work: TableDef<PlanWork>;
+      plan_symbols: TableDef<PlanSymbol>;
     };
     Views: Record<string, never>;
     Functions: {

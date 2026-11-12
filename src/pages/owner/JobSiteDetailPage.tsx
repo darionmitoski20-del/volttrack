@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, UserPlus, X, MapPin } from 'lucide-react';
+import { ArrowLeft, Pencil, UserPlus, X, MapPin, ScanLine } from 'lucide-react';
 import { formatDate, formatDuration, formatTime, minutesBetween } from '@/lib/datetime';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { useJobSite } from '@/hooks/useJobSites';
@@ -51,9 +51,17 @@ export function JobSiteDetailPage() {
               title={s.name}
               subtitle={s.client_name ?? undefined}
               actions={
-                <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} onClick={() => setEditOpen(true)}>
-                  Edit
-                </Button>
+                <>
+                  <Link
+                    to={`/app/job-sites/${id}/plans`}
+                    className="inline-flex h-11 items-center gap-2 rounded-xl bg-volt-500 px-4 text-sm font-semibold text-navy-900 shadow-card hover:bg-volt-400"
+                  >
+                    <ScanLine className="h-4 w-4" /> Plan Reader
+                  </Link>
+                  <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} onClick={() => setEditOpen(true)}>
+                    Edit
+                  </Button>
+                </>
               }
             />
 

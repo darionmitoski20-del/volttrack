@@ -36,6 +36,7 @@ import { AnalysisPage } from '@/pages/owner/AnalysisPage';
 import { EmployeeStatsPage } from '@/pages/employee/EmployeeStatsPage';
 import { EmployeeMaterialsPage } from '@/pages/employee/EmployeeMaterialsPage';
 import { EmployeeDetailPage } from '@/pages/owner/EmployeeDetailPage';
+import { PlanReaderPage } from '@/pages/shared/PlanReaderPage';
 
 function HomeRedirect() {
   const { role } = useAuth();
@@ -74,6 +75,7 @@ const router = createBrowserRouter([
                   { path: 'employees/:id', element: <EmployeeDetailPage /> },
                   { path: 'job-sites', element: <JobSitesPage /> },
                   { path: 'job-sites/:id', element: <JobSiteDetailPage /> },
+                  { path: 'job-sites/:id/plans', element: <PlanReaderPage /> },
                   { path: 'time-entries', element: <TimeEntriesPage /> },
                   { path: 'timesheets', element: <TimesheetsPage /> },
                   { path: 'materials', element: <MaterialsPage /> },
@@ -102,6 +104,7 @@ const router = createBrowserRouter([
                   { path: 'timesheets', element: <MyTimesheetsPage /> },
                   { path: 'calendar', element: <CalendarPage /> },
                   { path: 'job-sites', element: <EmployeeJobSitesPage /> },
+                  { path: 'job-sites/:id/plans', element: <PlanReaderPage /> },
                   { path: 'chat', element: <ChatPage /> },
                   { path: 'materials', element: <EmployeeMaterialsPage /> },
                   { path: 'stats', element: <EmployeeStatsPage /> },

@@ -1,0 +1,34 @@
+name: Check branch (typecheck + build)
+
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      - name: Typecheck (new Plan Reader files must be clean)
+        run: |
+          npx tsc -p tsconfig.app.json --noEmit > tsc.txt 2>&1 || true
+          echo "Total TypeScript errors in repo: $(grep -c 'error TS' tsc.txt || true)"
+          grep -E 'planreader|usePlans|PlanReaderPage|App\.tsx|JobSiteDetailPage|EmployeeJobSitesPage|database\.types' tsc.txt > mine.txt || true
+          cat mine.txt
+          test ! -s mine.txt
+
+      - name: Build
+        run: npx vite build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: build-check

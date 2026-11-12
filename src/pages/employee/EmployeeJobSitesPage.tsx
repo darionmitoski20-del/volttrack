@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock, MapPin, Plus, List, Map as MapIcon, ExternalLink } from 'lucide-react';
+import { Clock, MapPin, Plus, List, Map as MapIcon, ExternalLink, ScanLine } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { formatDuration } from '@/lib/datetime';
 import type { JobSite } from '@/lib/database.types';
 import { useMyAssignedSites } from '@/hooks/useAssignments';
@@ -107,6 +108,12 @@ export function EmployeeJobSitesPage() {
                       {formatDuration(hoursBySite.data?.get(s.id) ?? 0)}
                     </span>
                     <span className="text-xs text-ink-subtle">worked here</span>
+                    <Link
+                      to={`/me/job-sites/${s.id}/plans`}
+                      className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-volt-500 px-3 py-1.5 text-xs font-semibold text-navy-900 hover:bg-volt-400"
+                    >
+                      <ScanLine className="h-3.5 w-3.5" /> Plan
+                    </Link>
                   </div>
                 </Card>
               ))}
