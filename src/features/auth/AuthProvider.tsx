@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { Company, CompanyMember, Profile, Role } from '@/lib/database.types';
@@ -19,6 +19,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
+  enterDemo: (role: Role) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -53,12 +54,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading: true,
   });
 
+  // Only the latest applySession call may write state (avoids a stale load
+  // overwriting a newer one, e.g. right after a demo join).
+  const seq = useRef(0);
   const applySession = useCallback(async (session: Session | null) => {
+    const mine = ++seq.current;
     if (!session) {
       setState({ session: null, profile: null, membership: null, role: null, loading: false });
       return;
     }
     const { profile, membership } = await loadContext(session.user.id);
+    if (mine !== seq.current) return;
     setState({
       session,
       profile,
@@ -93,14 +99,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applySession(data.session);
   }, [applySession]);
 
+  // One-tap entry: anonymous session + join the demo company with the chosen role.
+  const enterDemo = useCallback(async (role: Role) => {
+    let { data } = await supabase.auth.getSession();
+    if (!data.session || !data.session.user.is_anonymous) {
+      if (data.session) await supabase.auth.signOut();
+      const res = await supabase.auth.signInAnonymously();
+      if (res.error) throw res.error;
+      data = { session: res.data.session! };
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.rpc as any)('demo_join', { p_role: role });
+    if (error) throw error;
+    await applySession(data.session);
+  }, [applySession]);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
     setState({ session: null, profile: null, membership: null, role: null, loading: false });
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, refresh, signIn, signOut }),
-    [state, refresh, signIn, signOut],
+    () => ({ ...state, refresh, signIn, enterDemo, signOut }),
+    [state, refresh, signIn, enterDemo, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

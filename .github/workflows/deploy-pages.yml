@@ -35,10 +35,6 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
-          VITE_DEMO_OWNER_EMAIL: ${{ secrets.DEMO_OWNER_EMAIL }}
-          VITE_DEMO_OWNER_PASSWORD: ${{ secrets.DEMO_OWNER_PASSWORD }}
-          VITE_DEMO_EMPLOYEE_EMAIL: ${{ secrets.DEMO_EMPLOYEE_EMAIL }}
-          VITE_DEMO_EMPLOYEE_PASSWORD: ${{ secrets.DEMO_EMPLOYEE_PASSWORD }}
 
       # GitHub Pages has no rewrites, so serve the app for every unknown path.
       - run: cp dist/index.html dist/404.html

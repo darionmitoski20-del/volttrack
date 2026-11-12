@@ -6,36 +6,19 @@ import { errorMessage } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { AuthLayout } from './AuthLayout';
 
-// One-tap sign-in as Owner or Employee. Accounts come from build-time env (GitHub secrets).
-const ACCOUNTS = {
-  owner: {
-    email: import.meta.env.VITE_DEMO_OWNER_EMAIL as string | undefined,
-    password: import.meta.env.VITE_DEMO_OWNER_PASSWORD as string | undefined,
-  },
-  employee: {
-    email: import.meta.env.VITE_DEMO_EMPLOYEE_EMAIL as string | undefined,
-    password: import.meta.env.VITE_DEMO_EMPLOYEE_PASSWORD as string | undefined,
-  },
-};
-
-type Who = keyof typeof ACCOUNTS;
+type Who = 'owner' | 'employee';
 
 export function SignIn() {
-  const { signIn } = useAuth();
+  const { enterDemo } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Who | null>(null);
 
   const enter = async (who: Who) => {
     setError(null);
-    const { email, password } = ACCOUNTS[who];
-    if (!email || !password) {
-      setError('Sign-in is not set up yet.');
-      return;
-    }
     setBusy(who);
     try {
-      await signIn(email, password);
+      await enterDemo(who);
       navigate('/', { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'Unable to sign in.'));
