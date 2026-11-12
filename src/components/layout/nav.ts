@@ -7,7 +7,6 @@ import {
   CalendarDays,
   BarChart3,
   BarChart2,
-  ScrollText,
   Settings,
   User,
   MessageSquare,
@@ -35,7 +34,6 @@ const OWNER_NAV: NavItem[] = [
   { to: '/app/materials', label: 'Materials', icon: Package },
   { to: '/app/reports', label: 'Reports', icon: BarChart3 },
   { to: '/app/analysis', label: 'Analysis', icon: TrendingUp },
-  { to: '/app/audit', label: 'Activity', icon: ScrollText },
   { to: '/app/chat', label: 'Chat', icon: MessageSquare },
   { to: '/app/settings', label: 'Settings', icon: Settings },
 ];

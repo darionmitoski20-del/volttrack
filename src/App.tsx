@@ -18,7 +18,6 @@ import { TimeEntriesPage } from '@/pages/owner/TimeEntriesPage';
 import { TimesheetsPage } from '@/pages/owner/TimesheetsPage';
 import { MaterialsPage } from '@/pages/owner/MaterialsPage';
 import { ReportsPage } from '@/pages/owner/ReportsPage';
-import { AuditPage } from '@/pages/owner/AuditPage';
 import { SettingsPage } from '@/pages/owner/SettingsPage';
 import { OwnerProfilePage } from '@/pages/owner/OwnerProfilePage';
 
@@ -78,7 +77,6 @@ const router = createBrowserRouter([
                   { path: 'timesheets', element: <TimesheetsPage /> },
                   { path: 'materials', element: <MaterialsPage /> },
                   { path: 'reports', element: <ReportsPage /> },
-                  { path: 'audit', element: <AuditPage /> },
                   { path: 'live-hours', element: <LiveHoursPage /> },
                   { path: 'analysis', element: <AnalysisPage /> },
                   { path: 'chat', element: <ChatPage /> },

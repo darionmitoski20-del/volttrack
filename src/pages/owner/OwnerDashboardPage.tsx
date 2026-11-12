@@ -15,7 +15,7 @@ import {
   RotateCcw,
   Check,
 } from 'lucide-react';
-import { formatDuration, formatTime, formatDateTime, minutesBetween } from '@/lib/datetime';
+import { formatDuration, formatTime, minutesBetween } from '@/lib/datetime';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { useEmployees, useWeeklyHoursByEmployee } from '@/hooks/useEmployees';
@@ -23,7 +23,6 @@ import { useJobSites } from '@/hooks/useJobSites';
 import { useInvitations } from '@/hooks/useInvitations';
 import { useTimesheets } from '@/hooks/useTimesheets';
 import { useActiveWorkers } from '@/hooks/useActiveWorkers';
-import { useAudit, auditActionLabel } from '@/hooks/useAudit';
 import { useCompany } from '@/hooks/useCompany';
 import {
   loadDashboardLayout,
@@ -41,7 +40,6 @@ const WIDGET_LABELS: Record<DashboardWidgetId, string> = {
   clock: 'On the clock now',
   attention: 'Attention required',
   actions: 'Quick actions',
-  activity: 'Recent activity',
 };
 
 export function OwnerDashboardPage() {
@@ -54,7 +52,6 @@ export function OwnerDashboardPage() {
   const submitted = useTimesheets(['submitted']);
   const weeklyHours = useWeeklyHoursByEmployee();
   const active = useActiveWorkers();
-  const audit = useAudit(8);
 
   const [editingLayout, setEditingLayout] = useState(false);
   const [order, setOrder] = useState<DashboardWidgetId[]>([]);
@@ -109,9 +106,7 @@ export function OwnerDashboardPage() {
     const hasInvite =
       (invitations.data?.length ?? 0) > 0 || (employees.data?.length ?? 0) > 1;
     const hasShift =
-      (active.data?.length ?? 0) > 0 || companyWeekMinutes > 0 || (audit.data ?? []).some((a) =>
-        a.action.startsWith('time_entry'),
-      );
+      (active.data?.length ?? 0) > 0 || companyWeekMinutes > 0;
     return [
       {
         id: 'details',
@@ -146,7 +141,7 @@ export function OwnerDashboardPage() {
         cta: 'View time',
       },
     ];
-  }, [company.data, jobSites.data, invitations.data, employees.data, active.data, companyWeekMinutes, audit.data]);
+  }, [company.data, jobSites.data, invitations.data, employees.data, active.data, companyWeekMinutes]);
 
   const widgetContent: Record<DashboardWidgetId, React.ReactNode> = {
     clock: (
@@ -246,37 +241,6 @@ export function OwnerDashboardPage() {
               Export a report
             </Button>
           </Link>
-        </CardBody>
-      </Card>
-    ),
-    activity: (
-      <Card>
-        <CardHeader className="flex items-center justify-between">
-          <CardTitle>Recent activity</CardTitle>
-          <Link to="/app/audit" className="text-sm font-medium text-navy-700 hover:text-ink">
-            View all
-          </Link>
-        </CardHeader>
-        <CardBody>
-          {audit.isLoading ? (
-            <SkeletonRows rows={4} />
-          ) : audit.data && audit.data.length > 0 ? (
-            <ul className="space-y-2.5">
-              {audit.data.map((log) => (
-                <li key={log.id} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate text-ink">
-                    <span className="font-medium">{log.actor?.full_name ?? 'Someone'}</span>{' '}
-                    <span className="text-ink-muted">{auditActionLabel(log.action)}</span>
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-subtle">
-                    {formatDateTime(log.created_at, timezone)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState title="No activity yet" description="Actions across your company show up here." />
-          )}
         </CardBody>
       </Card>
     ),

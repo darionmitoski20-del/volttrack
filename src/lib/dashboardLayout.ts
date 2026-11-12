@@ -1,8 +1,8 @@
 /** Customizable dashboard widget order + visibility, persisted per-company in localStorage. */
 
-export type DashboardWidgetId = 'clock' | 'attention' | 'actions' | 'activity';
+export type DashboardWidgetId = 'clock' | 'attention' | 'actions';
 
-export const DEFAULT_WIDGET_ORDER: DashboardWidgetId[] = ['clock', 'attention', 'actions', 'activity'];
+export const DEFAULT_WIDGET_ORDER: DashboardWidgetId[] = ['clock', 'attention', 'actions'];
 
 interface DashboardLayout {
   order: DashboardWidgetId[];
@@ -19,8 +19,11 @@ export function loadDashboardLayout(companyId: string): DashboardLayout {
     if (!raw) return { order: DEFAULT_WIDGET_ORDER, hidden: [] };
     const parsed = JSON.parse(raw) as DashboardLayout;
     // Guard against a stale layout missing newer widgets — append anything absent.
-    const missing = DEFAULT_WIDGET_ORDER.filter((w) => !parsed.order.includes(w));
-    return { order: [...parsed.order, ...missing], hidden: parsed.hidden ?? [] };
+    // Drop widgets that no longer exist (e.g. the removed 'activity').
+    const known = parsed.order.filter((w) => DEFAULT_WIDGET_ORDER.includes(w));
+    const missing = DEFAULT_WIDGET_ORDER.filter((w) => !known.includes(w));
+    const hidden = (parsed.hidden ?? []).filter((w) => DEFAULT_WIDGET_ORDER.includes(w));
+    return { order: [...known, ...missing], hidden };
   } catch {
     return { order: DEFAULT_WIDGET_ORDER, hidden: [] };
   }
