@@ -133,14 +133,32 @@ insert into storage.buckets (id, name, public, file_size_limit)
 values ('plans', 'plans', false, 209715200) -- 200 MB
 on conflict (id) do nothing;
 
+-- (compared as text, so paths in other buckets are never cast to uuid)
 drop policy if exists "plans company read" on storage.objects;
 create policy "plans company read" on storage.objects for select to authenticated
-  using (bucket_id = 'plans' and (storage.foldername(name))[1]::uuid in (select public.auth_company_ids()));
+  using (
+    bucket_id = 'plans'
+    and (storage.foldername(name))[1] in (select c::text from public.auth_company_ids() c)
+  );
 
 drop policy if exists "plans owner write" on storage.objects;
 create policy "plans owner write" on storage.objects for insert to authenticated
-  with check (bucket_id = 'plans' and public.is_company_owner((storage.foldername(name))[1]::uuid));
+  with check (
+    bucket_id = 'plans'
+    and exists (
+      select 1 from public.company_members m
+      where m.company_id::text = (storage.foldername(name))[1]
+        and m.user_id = auth.uid() and m.role = 'owner' and m.status = 'active'
+    )
+  );
 
 drop policy if exists "plans owner delete" on storage.objects;
 create policy "plans owner delete" on storage.objects for delete to authenticated
-  using (bucket_id = 'plans' and public.is_company_owner((storage.foldername(name))[1]::uuid));
+  using (
+    bucket_id = 'plans'
+    and exists (
+      select 1 from public.company_members m
+      where m.company_id::text = (storage.foldername(name))[1]
+        and m.user_id = auth.uid() and m.role = 'owner' and m.status = 'active'
+    )
+  );
