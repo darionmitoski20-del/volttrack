@@ -51,7 +51,7 @@ export function PlanViewer({
   const drawingsQ = usePlanDrawings(jobSiteId);
   const addDrawing = useAddDrawing(jobSiteId);
   const delDrawing = useDeleteDrawing(jobSiteId);
-  const [penColor, setPenColor] = useState(PEN_COLORS[0]);
+  const [penColor, setPenColor] = useState<string>(PEN_COLORS[0]!);
   const [stroke, setStroke] = useState<number[] | null>(null);
   const [myStrokes, setMyStrokes] = useState<string[]>([]);
   const [showRoutes, setShowRoutes] = useState(true);
@@ -165,7 +165,7 @@ export function PlanViewer({
       const [x, y] = toPlan(e.clientX, e.clientY);
       setStroke((st) => {
         if (!st) return st;
-        const lx = st[st.length - 2], ly = st[st.length - 1];
+        const lx = st[st.length - 2] ?? x, ly = st[st.length - 1] ?? y;
         return Math.hypot(x - lx, y - ly) * view.s < 3 ? st : [...st, x, y];
       });
       return;
