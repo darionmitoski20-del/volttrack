@@ -39,6 +39,18 @@ jobs:
       # GitHub Pages has no rewrites, so serve the app for every unknown path.
       - run: cp dist/index.html dist/404.html
 
+      # Known pages also get their own copy, so links to them answer "200 OK"
+      # (link previews and chat apps show "404" for the 404.html fallback).
+      - name: Static copies for app routes
+        run: |
+          for r in signin create-company reset-password accept-invitation \
+                   app app/employees app/job-sites app/time-entries app/timesheets app/materials \
+                   app/reports app/live-hours app/analysis app/chat app/settings app/profile \
+                   me me/time-entries me/timesheets me/calendar me/job-sites me/chat me/materials \
+                   me/stats me/profile; do
+            mkdir -p "dist/$r" && cp dist/index.html "dist/$r/index.html"
+          done
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
