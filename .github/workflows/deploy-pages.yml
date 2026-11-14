@@ -49,6 +49,7 @@ jobs:
                    me me/time-entries me/timesheets me/calendar me/job-sites me/chat me/materials \
                    me/stats me/profile; do
             mkdir -p "dist/$r" && cp dist/index.html "dist/$r/index.html"
+            cp dist/index.html "dist/$r.html"   # "/app" answers 200 directly, without a redirect to "/app/"
           done
 
       - uses: actions/upload-pages-artifact@v3
