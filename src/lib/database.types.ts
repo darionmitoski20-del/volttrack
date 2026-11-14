@@ -358,6 +358,18 @@ export interface PlanDrawing {
   created_at: string;
 }
 
+export interface PlanAiPage {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  version_id: string;
+  page: number;
+  title: string;
+  result: unknown;
+  created_by: string | null;
+  created_at: string;
+}
+
 type Row<T> = T;
 type Insert<T> = Partial<T>;
 type Update<T> = Partial<T>;
@@ -395,6 +407,7 @@ export interface Database {
       plan_work: TableDef<PlanWork>;
       plan_symbols: TableDef<PlanSymbol>;
       plan_drawings: TableDef<PlanDrawing>;
+      plan_ai_pages: TableDef<PlanAiPage>;
     };
     Views: Record<string, never>;
     Functions: {

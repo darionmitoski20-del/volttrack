@@ -19,11 +19,12 @@ import { errorMessage } from '@/lib/supabase';
 import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanDiffRow } from '@/lib/database.types';
 import { PlanViewer } from '@/features/planreader/PlanViewer';
+import { AiTab } from '@/features/planreader/AiTab';
 import { uploadPlan } from '@/features/planreader/service';
 import { CLASSES, UNCERTAIN } from '@/features/planreader/engine';
 import { DISCIPLINE_ORDER, isCountable, roomLabel } from '@/features/planreader/labels';
 
-type Tab = 'plan' | 'overview' | 'rooms' | 'daily' | 'revisions' | 'review';
+type Tab = 'plan' | 'overview' | 'rooms' | 'daily' | 'legend' | 'revisions' | 'review';
 
 export function PlanReaderPage() {
   const { id = '' } = useParams();
@@ -36,7 +37,7 @@ export function PlanReaderPage() {
   const [tab, setTab] = useState<Tab>('plan');
 
   const tabs: [Tab, string][] = [
-    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['revisions', 'Revisions'],
+    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['legend', 'Legend (AI)'], ['revisions', 'Revisions'],
   ];
   if (isOwner) tabs.push(['review', 'Review']);
 
@@ -100,6 +101,8 @@ export function PlanReaderPage() {
               <RoomsTab plan={p} work={work.data ?? new Map()} />
             ) : tab === 'daily' ? (
               <DailyTab jobSiteId={id} plan={p} timezone={timezone} />
+            ) : tab === 'legend' ? (
+              <AiTab jobSiteId={id} versionId={p.version.id} isOwner={isOwner} />
             ) : (
               <ReviewTab jobSiteId={id} plan={p} />
             )
