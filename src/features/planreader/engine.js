@@ -232,16 +232,37 @@ async function renderGray(page, scale, config, pdfDoc) {
   canvas.width = canvas.height = 0;
   return { gray: g, W, H };
 }
+// [id, group] pairs of the PDF layers. Iterating the config directly fails in Safari on
+// iPhone, so fall back to getGroups() / getOrder() + getGroup().
+function layerGroups(cfg) {
+  try {
+    if (typeof cfg[Symbol.iterator] === 'function') return Array.from(cfg);
+  } catch (e) { /* fall through */ }
+  try {
+    const g = typeof cfg.getGroups === 'function' ? cfg.getGroups() : null;
+    if (g) return g instanceof Map ? Array.from(g.entries()) : Object.keys(g).map((k) => [k, g[k]]);
+  } catch (e) { /* fall through */ }
+  const ids = [];
+  const walk = (o) => {
+    if (!o) return;
+    if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) walk(o[i]); return; }
+    if (typeof o === 'object' && Array.isArray(o.order)) { walk(o.order); return; }
+    if (typeof o === 'string') ids.push(o);
+  };
+  try { walk(cfg.getOrder()); } catch (e) { /* none */ }
+  return ids.map((id) => [id, cfg.getGroup(id) || {}]);
+}
 async function layerConfig(pdfDoc, pred) {
   const cfg = await pdfDoc.getOptionalContentConfig({ intent: 'display' });
   if (!cfg) return null;
-  for (const [id, grp] of cfg) cfg.setVisibility(id, pred(grp.name || ''), false);
+  const groups = layerGroups(cfg);
+  for (let i = 0; i < groups.length; i++) cfg.setVisibility(groups[i][0], pred(groups[i][1].name || ''), false);
   return cfg;
 }
 async function layerNames(pdfDoc) {
-  const cfg = await pdfDoc.getOptionalContentConfig({ intent: 'display' }); const out = [];
-  if (cfg) for (const [, grp] of cfg) out.push(grp.name || '');
-  return out;
+  const cfg = await pdfDoc.getOptionalContentConfig({ intent: 'display' });
+  if (!cfg) return [];
+  return layerGroups(cfg).map((g) => g[1].name || '');
 }
 
 function detectComponents(gray, W, H, widthPt) {

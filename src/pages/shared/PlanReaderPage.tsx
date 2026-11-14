@@ -131,7 +131,9 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
       qc.invalidateQueries({ queryKey: ['plan-versions', jobSiteId] });
       setFile(null);
     } catch (e) {
-      setErr(errorMessage(e, 'Could not read the plan.'));
+      // Keep the first stack line so errors on phones can be traced from a screenshot.
+      const where = e instanceof Error && e.stack ? ' [' + e.stack.split('\n').slice(0, 2).join(' | ').slice(0, 160) + ']' : '';
+      setErr(errorMessage(e, 'Could not read the plan.') + where);
     } finally {
       setProg(null);
     }
