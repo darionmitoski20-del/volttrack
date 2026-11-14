@@ -346,6 +346,18 @@ export interface PlanSymbol {
   created_at: string;
 }
 
+export interface PlanDrawing {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  sheet: string;
+  points: number[];
+  color: string;
+  width: number;
+  created_by: string | null;
+  created_at: string;
+}
+
 type Row<T> = T;
 type Insert<T> = Partial<T>;
 type Update<T> = Partial<T>;
@@ -382,6 +394,7 @@ export interface Database {
       plan_items: TableDef<PlanItem>;
       plan_work: TableDef<PlanWork>;
       plan_symbols: TableDef<PlanSymbol>;
+      plan_drawings: TableDef<PlanDrawing>;
     };
     Views: Record<string, never>;
     Functions: {

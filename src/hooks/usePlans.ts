@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useCompanyContext } from './useCompanyContext';
-import type { PlanItem, PlanSheet, PlanVersion } from '@/lib/database.types';
+import type { PlanDrawing, PlanItem, PlanSheet, PlanVersion } from '@/lib/database.types';
 import { BUCKET } from '@/features/planreader/service';
 import { className } from '@/features/planreader/engine';
 
@@ -234,4 +234,52 @@ export async function planPdfUrl(path: string) {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
   if (error) throw error;
   return data.signedUrl;
+}
+
+/** Hand-drawn routes on a job site's plan sheets (kept across revisions). */
+export function usePlanDrawings(jobSiteId: string) {
+  return useQuery({
+    queryKey: ['plan-drawings', jobSiteId],
+    queryFn: async (): Promise<PlanDrawing[]> => {
+      const { data, error } = await supabase
+        .from('plan_drawings')
+        .select('*')
+        .eq('job_site_id', jobSiteId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as PlanDrawing[];
+    },
+  });
+}
+
+/** Owner: save one drawn line. */
+export function useAddDrawing(jobSiteId: string) {
+  const { companyId } = useCompanyContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (d: { sheet: string; points: number[]; color: string; width: number }) => {
+      const { data: u } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from('plan_drawings')
+        .insert({ company_id: companyId, job_site_id: jobSiteId, sheet: d.sheet, points: d.points, color: d.color, width: d.width, created_by: u.user?.id ?? null })
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as PlanDrawing;
+    },
+    onSuccess: (row) => qc.setQueryData<PlanDrawing[]>(['plan-drawings', jobSiteId], (old) => [...(old ?? []), row]),
+  });
+}
+
+/** Owner: delete a drawn line. */
+export function useDeleteDrawing(jobSiteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('plan_drawings').delete().eq('id', id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id) => qc.setQueryData<PlanDrawing[]>(['plan-drawings', jobSiteId], (old) => (old ?? []).filter((d) => d.id !== id)),
+  });
 }

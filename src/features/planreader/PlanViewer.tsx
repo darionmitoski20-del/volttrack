@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Hand, MousePointer2, Plus, Maximize2, ZoomIn, ZoomOut, Check, X, Trash2 } from 'lucide-react';
+import { Hand, MousePointer2, Plus, Maximize2, ZoomIn, ZoomOut, Check, X, Trash2, Pencil, Eraser, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/form';
@@ -7,11 +7,15 @@ import { useToast } from '@/components/ui/Toast';
 import { errorMessage } from '@/lib/supabase';
 import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanItem, PlanSheet } from '@/lib/database.types';
-import { useAddPlanItem, useDeletePlanItem, useMarkWork, type WorkState } from '@/hooks/usePlans';
+import { useAddPlanItem, useDeletePlanItem, useMarkWork, usePlanDrawings, useAddDrawing, useDeleteDrawing, type WorkState } from '@/hooks/usePlans';
 import { CLASSES } from './engine';
 import { roomLabel, isCountable } from './labels';
 
-type Tool = 'pan' | 'select' | 'add';
+type Tool = 'pan' | 'select' | 'add' | 'draw' | 'erase';
+
+// Pencil colours for drawn routes.
+const PEN_COLORS = ['#dc2626', '#2563eb', '#16a34a', '#ea580c', '#9333ea', '#111827'];
+const PEN_WIDTH = 3;
 
 const DONE = '#059669';
 const OPEN = '#64748b';
@@ -44,6 +48,13 @@ export function PlanViewer({
   const mark = useMarkWork(jobSiteId);
   const addItem = useAddPlanItem(jobSiteId);
   const delItem = useDeletePlanItem(jobSiteId);
+  const drawingsQ = usePlanDrawings(jobSiteId);
+  const addDrawing = useAddDrawing(jobSiteId);
+  const delDrawing = useDeleteDrawing(jobSiteId);
+  const [penColor, setPenColor] = useState(PEN_COLORS[0]);
+  const [stroke, setStroke] = useState<number[] | null>(null);
+  const [myStrokes, setMyStrokes] = useState<string[]>([]);
+  const [showRoutes, setShowRoutes] = useState(true);
 
   const storageKey = `plan-sheet-${jobSiteId}`;
   const [sheetNo, setSheetNo] = useState<string>(() => {
@@ -65,6 +76,10 @@ export function PlanViewer({
   const vpRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ s: 0.3, x: 0, y: 0 });
 
+  const sheetDrawings = useMemo(
+    () => (drawingsQ.data ?? []).filter((d) => d.sheet === sheet?.number),
+    [drawingsQ.data, sheet],
+  );
   const sheetItems = useMemo(() => items.filter((i) => i.sheet === sheet?.number), [items, sheet]);
   const visible = useMemo(
     () => sheetItems.filter((i) => !hidden.has(i.name) && (!onlyOpen || !work.get(i.uid)?.done)),
@@ -125,6 +140,13 @@ export function PlanViewer({
       const [a, b] = [...ptrs.current.values()] as [[number, number], [number, number]];
       pinch.current = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: view.s };
       drag.current = null;
+      setStroke(null); // a second finger means zoom, not drawing
+      return;
+    }
+    if (tool === 'draw') {
+      const [x, y] = toPlan(e.clientX, e.clientY);
+      setStroke([x, y]);
+      drag.current = null;
       return;
     }
     drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false, target: e.target };
@@ -137,6 +159,15 @@ export function PlanViewer({
       const r = vpRef.current!.getBoundingClientRect();
       const target = (pinch.current.s * Math.hypot(a[0] - b[0], a[1] - b[1])) / pinch.current.d;
       zoomAt(target / view.s, (a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top);
+      return;
+    }
+    if (tool === 'draw' && ptrs.current.size === 1) {
+      const [x, y] = toPlan(e.clientX, e.clientY);
+      setStroke((st) => {
+        if (!st) return st;
+        const lx = st[st.length - 2], ly = st[st.length - 1];
+        return Math.hypot(x - lx, y - ly) * view.s < 3 ? st : [...st, x, y];
+      });
       return;
     }
     const d = drag.current;
@@ -154,6 +185,11 @@ export function PlanViewer({
   const onUp = (e: React.PointerEvent) => {
     ptrs.current.delete(e.pointerId);
     if (ptrs.current.size < 2) pinch.current = null;
+    if (tool === 'draw') {
+      if (stroke && stroke.length >= 4 && sheet && ptrs.current.size === 0) void saveStroke(stroke);
+      setStroke(null);
+      return;
+    }
     const d = drag.current;
     drag.current = null;
     if (!d) return;
@@ -169,7 +205,41 @@ export function PlanViewer({
     }
   };
 
+  const saveStroke = async (pts: number[]) => {
+    if (!sheet) return;
+    try {
+      const row = await addDrawing.mutateAsync({
+        sheet: sheet.number,
+        points: pts.map((v) => Math.round(v * 10) / 10),
+        color: penColor,
+        width: PEN_WIDTH,
+      });
+      setMyStrokes((m) => [...m, row.id]);
+    } catch (err) {
+      showToast('Could not save the line', errorMessage(err, 'Try again.'));
+    }
+  };
+
+  const undo = async () => {
+    const id = myStrokes[myStrokes.length - 1];
+    if (!id) return;
+    try {
+      await delDrawing.mutateAsync(id);
+      setMyStrokes((m) => m.slice(0, -1));
+    } catch (err) {
+      showToast('Could not undo', errorMessage(err, 'Try again.'));
+    }
+  };
+
   const tap = (target: EventTarget | null, cx: number, cy: number) => {
+    if (tool === 'erase') {
+      const did = (target as SVGElement | null)?.dataset?.draw;
+      if (did) {
+        delDrawing.mutate(did, { onError: (err) => showToast('Could not erase', errorMessage(err, 'Try again.')) });
+        setMyStrokes((m) => m.filter((x) => x !== did));
+      }
+      return;
+    }
     const id = (target as SVGElement | null)?.dataset?.id;
     const item = id ? sheetItems.find((i) => i.id === id) : undefined;
     if (tool === 'add' && !item) {
@@ -254,6 +324,11 @@ export function PlanViewer({
           <label className="flex items-center gap-1.5 text-sm text-ink-muted">
             <input type="checkbox" checked={onlyOpen} onChange={(e) => setOnlyOpen(e.target.checked)} /> Only not done
           </label>
+          {sheetDrawings.length > 0 && (
+            <label className="flex items-center gap-1.5 text-sm text-ink-muted">
+              <input type="checkbox" checked={showRoutes} onChange={(e) => setShowRoutes(e.target.checked)} /> Show routes
+            </label>
+          )}
           <span className="flex items-center gap-3 text-xs text-ink-muted">
             <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: OPEN }} />Not done</span>
             <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-full" style={{ background: DONE }} />Done</span>
@@ -263,7 +338,7 @@ export function PlanViewer({
         <div
           ref={vpRef}
           className="relative h-[62vh] touch-none select-none overflow-hidden rounded-xl border border-navy-100 bg-white lg:h-[calc(100vh-230px)]"
-          style={{ cursor: tool === 'pan' ? 'grab' : 'crosshair' }}
+          style={{ cursor: tool === 'pan' ? 'grab' : tool === 'erase' ? 'pointer' : 'crosshair' }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
@@ -276,6 +351,18 @@ export function PlanViewer({
               <div style={{ width: sheet.width, height: sheet.height }} className="bg-navy-50" />
             )}
             <svg className="absolute left-0 top-0 overflow-visible" width={sheet.width} height={sheet.height} viewBox={`0 0 ${sheet.width} ${sheet.height}`}>
+              {(showRoutes || tool === 'draw' || tool === 'erase') &&
+                sheetDrawings.map((d) => (
+                  <g key={d.id}>
+                    <polyline points={d.points.join(' ')} fill="none" stroke={d.color} strokeWidth={d.width} strokeLinecap="round" strokeLinejoin="round" />
+                    {tool === 'erase' && (
+                      <polyline data-draw={d.id} points={d.points.join(' ')} fill="none" stroke="transparent" strokeWidth={Math.max(16, 24 / view.s)} strokeLinecap="round" strokeLinejoin="round" style={{ cursor: 'pointer' }} />
+                    )}
+                  </g>
+                ))}
+              {stroke && stroke.length >= 4 && (
+                <polyline points={stroke.join(' ')} fill="none" stroke={penColor} strokeWidth={PEN_WIDTH} strokeLinecap="round" strokeLinejoin="round" />
+              )}
               {visible.map((i) => {
                 if (i.cls === 'UNKNOWN') {
                   return <rect key={i.id} data-id={i.id} x={i.x - r} y={i.y - r} width={2 * r} height={2 * r} fill="transparent" stroke="#dc2626" strokeWidth={2} strokeDasharray="4 3" />;
@@ -306,7 +393,32 @@ export function PlanViewer({
             <ToolButton on={tool === 'pan'} onClick={() => setTool('pan')} icon={<Hand className="h-4 w-4" />} label="Move" />
             <ToolButton on={tool === 'select'} onClick={() => setTool('select')} icon={<MousePointer2 className="h-4 w-4" />} label="Select" />
             {isOwner && <ToolButton on={tool === 'add'} onClick={() => setTool('add')} icon={<Plus className="h-4 w-4" />} label="Add device" />}
+            {isOwner && <ToolButton on={tool === 'draw'} onClick={() => setTool('draw')} icon={<Pencil className="h-4 w-4" />} label="Draw" />}
+            {isOwner && sheetDrawings.length > 0 && <ToolButton on={tool === 'erase'} onClick={() => setTool('erase')} icon={<Eraser className="h-4 w-4" />} label="Erase" />}
           </div>
+          {isOwner && tool === 'draw' && (
+            <div data-ui className="absolute left-2 top-12 flex items-center gap-1.5 rounded-lg border border-navy-100 bg-white p-1.5 shadow-sm">
+              {PEN_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Colour ${c}`}
+                  onClick={() => setPenColor(c)}
+                  className={`h-7 w-7 rounded-full border-2 ${penColor === c ? 'border-navy-900 ring-2 ring-amber-400' : 'border-white'}`}
+                  style={{ background: c }}
+                />
+              ))}
+              <button
+                type="button"
+                aria-label="Undo last line"
+                disabled={myStrokes.length === 0 || delDrawing.isPending}
+                onClick={undo}
+                className="ml-1 grid h-7 w-7 place-items-center rounded-md border border-navy-100 text-ink disabled:opacity-40"
+              >
+                <Undo2 className="h-4 w-4" />
+              </button>
+            </div>
+          )}
           <div data-ui className="absolute right-2 top-2 flex flex-col gap-1">
             <IconBtn label="Zoom in" onClick={() => zoomAt(1.3, vpRef.current!.clientWidth / 2, vpRef.current!.clientHeight / 2)}><ZoomIn className="h-4 w-4" /></IconBtn>
             <IconBtn label="Zoom out" onClick={() => zoomAt(1 / 1.3, vpRef.current!.clientWidth / 2, vpRef.current!.clientHeight / 2)}><ZoomOut className="h-4 w-4" /></IconBtn>
@@ -324,6 +436,16 @@ export function PlanViewer({
           {tool === 'select' && sel.size === 0 && (
             <div data-ui className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-white/90 px-3 py-1.5 text-xs text-ink-muted shadow">
               Tap devices or drag a box around them, or pick a room on the right
+            </div>
+          )}
+          {tool === 'draw' && (
+            <div data-ui className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-white/90 px-3 py-1.5 text-xs text-ink-muted shadow">
+              Draw with one finger · two fingers to zoom · saved automatically
+            </div>
+          )}
+          {tool === 'erase' && (
+            <div data-ui className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-white/90 px-3 py-1.5 text-xs text-ink-muted shadow">
+              Tap a line to delete it
             </div>
           )}
           {tool === 'add' && (
