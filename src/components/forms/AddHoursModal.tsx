@@ -68,6 +68,7 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
   const [formError, setFormError] = useState<string | null>(null);
   const [overlapInfo, setOverlapInfo] = useState<{ entryId: string; range: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showCoworkers, setShowCoworkers] = useState(false);
 
   const reset = () => {
     setDate(todayKey);
@@ -297,7 +298,7 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                       </div>
                       <div className="min-w-0 px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle">
-                          Break min
+                          Break
                         </p>
                         <input
                           type="number"
@@ -305,7 +306,7 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                           min={0}
                           max={480}
                           step={15}
-                          placeholder="0"
+                          placeholder="min"
                           value={loc.breakMins === 0 ? '' : loc.breakMins}
                           onChange={(e) =>
                             updateLoc(loc.id, {
@@ -333,8 +334,22 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
           {/* ---- Coworkers -------------------------------------------- */}
           {(coworkers.data ?? []).length > 0 && (
             <div>
-              <Label icon={Users}>Coworkers on site</Label>
-              <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCoworkers((v) => !v)}
+                className="flex w-full items-center justify-between rounded-xl border border-navy-200 bg-white px-3 py-2.5 text-left"
+              >
+                <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-subtle">
+                  <Users className="h-3.5 w-3.5" />
+                  Coworkers on site
+                  {selectedCoworkers.length > 0 && (
+                    <span className="ml-1 rounded-full bg-navy-800 px-2 py-0.5 text-[11px] text-white">{selectedCoworkers.length}</span>
+                  )}
+                </span>
+                <ChevronDown className={`h-4 w-4 text-ink-subtle transition-transform ${showCoworkers ? 'rotate-180' : ''}`} />
+              </button>
+              {showCoworkers && (
+              <div className="mt-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto">
                 {(coworkers.data ?? []).map((m) => {
                   const selected = selectedCoworkers.includes(m.user_id);
                   return (
@@ -348,11 +363,12 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                           : 'bg-navy-100 text-ink-muted hover:bg-navy-200'
                       }`}
                     >
-                      {m.profile.full_name.split(' ')[0]}
+                      {m.profile.full_name}
                     </button>
                   );
                 })}
               </div>
+              )}
             </div>
           )}
 
