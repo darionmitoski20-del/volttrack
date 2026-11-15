@@ -2,7 +2,7 @@ import { forwardRef, useId } from 'react';
 import { cn } from '@/lib/utils';
 
 const baseControl =
-  'w-full rounded-xl border bg-white px-3 text-sm text-ink placeholder:text-ink-subtle ' +
+  'w-full rounded-xl border bg-white px-3 text-base text-ink placeholder:text-ink-subtle sm:text-sm ' +
   'transition-colors focus:border-volt-500 disabled:bg-navy-50 disabled:text-ink-muted';
 
 export function FormField({

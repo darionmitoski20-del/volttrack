@@ -53,11 +53,11 @@ export function Modal({
         aria-label={title}
         tabIndex={-1}
         className={cn(
-          'w-full max-w-lg rounded-t-2xl bg-white shadow-pop outline-none sm:rounded-2xl',
+          'flex max-h-[92dvh] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-pop outline-none sm:max-h-[90vh] sm:rounded-2xl',
           className,
         )}
       >
-        <div className="flex items-center justify-between border-b border-navy-100 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-navy-100 px-5 py-4">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
             onClick={onClose}
@@ -67,7 +67,7 @@ export function Modal({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto p-5 scroll-touch">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] scroll-touch">{children}</div>
       </div>
     </div>
   );

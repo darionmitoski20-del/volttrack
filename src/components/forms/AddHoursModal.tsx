@@ -49,7 +49,7 @@ function Label({ children, icon: Icon }: { children: React.ReactNode; icon?: typ
 }
 
 const fieldClass =
-  'w-full rounded-xl border border-navy-200 bg-white px-3 py-2.5 text-sm text-ink ' +
+  'w-full rounded-xl border border-navy-200 bg-white px-3 py-2.5 text-base text-ink sm:text-sm ' +
   'focus:border-volt-400 focus:outline-none focus:ring-2 focus:ring-volt-400/30';
 
 export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -272,8 +272,8 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                     )}
 
                     {/* Times — one joined row */}
-                    <div className="flex overflow-hidden rounded-xl border border-navy-200 bg-white">
-                      <div className="flex-1 px-3 py-2">
+                    <div className="grid grid-cols-[1fr_1fr_4.5rem] overflow-hidden rounded-xl border border-navy-200 bg-white">
+                      <div className="min-w-0 border-r border-navy-100 px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle">
                           Start
                         </p>
@@ -281,11 +281,10 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                           type="time"
                           value={loc.startTime}
                           onChange={(e) => updateLoc(loc.id, { startTime: e.target.value })}
-                          className="w-full bg-transparent text-sm font-semibold text-ink focus:outline-none"
+                          className="block w-full min-w-0 appearance-none bg-transparent text-base font-semibold text-ink focus:outline-none sm:text-sm"
                         />
                       </div>
-                      <div className="w-px bg-navy-100" />
-                      <div className="flex-1 px-3 py-2">
+                      <div className="min-w-0 border-r border-navy-100 px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle">
                           End
                         </p>
@@ -293,24 +292,27 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
                           type="time"
                           value={loc.endTime}
                           onChange={(e) => updateLoc(loc.id, { endTime: e.target.value })}
-                          className="w-full bg-transparent text-sm font-semibold text-ink focus:outline-none"
+                          className="block w-full min-w-0 appearance-none bg-transparent text-base font-semibold text-ink focus:outline-none sm:text-sm"
                         />
                       </div>
-                      <div className="w-px bg-navy-100" />
-                      <div className="w-20 px-3 py-2">
+                      <div className="min-w-0 px-3 py-2">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-subtle">
-                          Break
+                          Break min
                         </p>
                         <input
                           type="number"
+                          inputMode="numeric"
                           min={0}
                           max={480}
                           step={15}
-                          value={loc.breakMins}
+                          placeholder="0"
+                          value={loc.breakMins === 0 ? '' : loc.breakMins}
                           onChange={(e) =>
-                            updateLoc(loc.id, { breakMins: Math.max(0, Number(e.target.value)) })
+                            updateLoc(loc.id, {
+                              breakMins: Math.min(480, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                            })
                           }
-                          className="w-full bg-transparent text-sm font-semibold text-ink focus:outline-none"
+                          className="block w-full min-w-0 bg-transparent text-base font-semibold text-ink placeholder:text-ink-subtle focus:outline-none sm:text-sm"
                         />
                       </div>
                     </div>
