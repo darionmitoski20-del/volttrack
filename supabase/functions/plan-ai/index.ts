@@ -37,6 +37,29 @@ no other text, with this shape (use [] when a section is not on the sheet, never
 
 Copy text exactly as printed. Keep descriptions short. If text is unreadable, leave the field "".`;
 
+const SUMMARY_PROMPT = `You are an experienced US electrical estimator. Below is the TEXT of every page of one
+electrical drawing set (extracted from the PDF), plus counts of short tags found on each page (fixture
+type marks, sensor tags, etc.). Write a project briefing for the electrical contractor.
+
+Write ALL values in Macedonian (Cyrillic script). Keep technical terms, model numbers, panel names and
+sheet numbers in English as printed. Return ONLY a JSON object, no other text:
+
+{
+  "project": "project name, address, owner, architect, engineer, issue date",
+  "scope": "2-4 sentences: what work this set covers",
+  "sheets": [ { "number": "E.2.0", "title": "short title" } ],
+  "power": [ "new/modified panels, feeders, breakers, load calculation, important equipment (AC, heaters, etc.) with breaker sizes" ],
+  "lighting": [ { "type": "A", "description": "fixture + manufacturer + watts", "count": 12, "emergency": "how many EM if known" } ],
+  "controls": [ "lighting control devices and counts (sensors, wall stations, room controllers)" ],
+  "fire_alarm": [ "fire alarm devices and counts, compatibility notes" ],
+  "low_voltage": [ "data, WAP, PA, card readers, CCTV etc." ],
+  "demolition": [ "what must be removed" ],
+  "watch_out": [ "risks, coordination items, things to verify in field, notes that cost money" ]
+}
+
+Use the tag counts for fixture and device quantities only from floor plan pages (not legends or
+schedules). If a quantity is not clear, say "~" before it or leave count null. Never invent data.`;
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
@@ -51,10 +74,13 @@ Deno.serve(async (req) => {
     const { data: u } = await sb.auth.getUser();
     if (!u.user) return json({ error: 'Not signed in' }, 401);
 
-    const { company_id, images } = await req.json();
+    const { company_id, images, mode, text } = await req.json();
     const { data: isOwner } = await sb.rpc('is_company_owner', { target_company: company_id });
     if (!isOwner) return json({ error: 'Only the owner can use AI reading' }, 403);
-    if (!Array.isArray(images) || images.length < 1 || images.length > 8) {
+    const summary = mode === 'summary';
+    if (summary) {
+      if (typeof text !== 'string' || text.length < 50) return json({ error: 'No text found in the PDF' }, 400);
+    } else if (!Array.isArray(images) || images.length < 1 || images.length > 8) {
       return json({ error: 'Send 1 to 8 images' }, 400);
     }
 
@@ -70,10 +96,12 @@ Deno.serve(async (req) => {
     const key = Deno.env.get('ANTHROPIC_API_KEY');
     if (!key) return json({ error: 'ANTHROPIC_API_KEY is not set on the server' }, 500);
 
-    const content = [
-      ...images.map((b: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
-      { type: 'text', text: PROMPT },
-    ];
+    const content = summary
+      ? [{ type: 'text', text: `${SUMMARY_PROMPT}\n\n=== DRAWING SET TEXT ===\n${text.slice(0, 400000)}` }]
+      : [
+          ...images.map((b: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
+          { type: 'text', text: PROMPT },
+        ];
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },

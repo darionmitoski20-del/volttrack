@@ -129,3 +129,89 @@ export async function readPagesWithAi(opts: {
   onProgress('Done', 1);
   return saved;
 }
+
+// ---- Whole-plan summary --------------------------------------------------------------
+
+export interface AiFixtureCount { type?: string; description?: string; count?: number | null; emergency?: string | number | null }
+export interface AiSummary {
+  kind: 'summary';
+  project?: string;
+  scope?: string;
+  sheets?: { number?: string; title?: string }[];
+  power?: string[];
+  lighting?: AiFixtureCount[];
+  controls?: string[];
+  fire_alarm?: string[];
+  low_voltage?: string[];
+  demolition?: string[];
+  watch_out?: string[];
+}
+
+/** Text of every page (lines in reading order) plus counts of short tags per page. */
+export async function planText(doc: any, onProgress?: (p: number) => void): Promise<string> {
+  const parts: string[] = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    page.cleanup();
+    const rows = new Map<number, { x: number; s: string }[]>();
+    const tags = new Map<string, number>();
+    for (const it of tc.items as any[]) {
+      const s = String(it.str || '').trim();
+      if (!s) continue;
+      const t = it.transform || [0, 0, 0, 0, 0, 0];
+      const y = Math.round(t[5] / 4);
+      const row = rows.get(y) ?? [];
+      row.push({ x: t[4], s });
+      rows.set(y, row);
+      for (const w of s.split(/\s+/)) {
+        if (/^[A-Z]{1,3}\d{0,2}$/.test(w) && w.length <= 4) tags.set(w, (tags.get(w) ?? 0) + 1);
+      }
+    }
+    const lines = [...rows.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, r]) => r.sort((a, b) => a.x - b.x).map((w) => w.s).join(' '));
+    const top = [...tags.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${k}:${v}`).join(' ');
+    parts.push(`\n##### PAGE ${p} #####\nTAG COUNTS: ${top}\n${lines.join('\n').slice(0, 45000)}`);
+    onProgress?.(p / doc.numPages);
+  }
+  return parts.join('\n');
+}
+
+/** Sends the whole plan's text to the AI and stores the briefing as page 0. */
+export async function summarizeWithAi(opts: {
+  doc: any;
+  companyId: string;
+  jobSiteId: string;
+  versionId: string;
+  onProgress: (msg: string, frac: number) => void;
+}): Promise<AiSummary> {
+  const { doc, companyId, jobSiteId, versionId, onProgress } = opts;
+  onProgress('Reading the text of every sheet…', 0);
+  const text = await planText(doc, (p) => onProgress('Reading the text of every sheet…', p * 0.3));
+  onProgress('AI is reading the whole plan (about 1 minute)…', 0.35);
+  const { data, error } = await supabase.functions.invoke('plan-ai', { body: { company_id: companyId, mode: 'summary', text } });
+  if (error) {
+    let msg = error.message;
+    try {
+      const body = await (error as any).context?.json?.();
+      if (body?.error) msg = body.error;
+    } catch { /* keep message */ }
+    throw new Error(msg);
+  }
+  const result = { ...(data?.result ?? {}), kind: 'summary' } as AiSummary;
+  const { data: u } = await supabase.auth.getUser();
+  await supabase.from('plan_ai_pages').delete().eq('version_id', versionId).eq('page', 0);
+  const { error: insErr } = await supabase.from('plan_ai_pages').insert({
+    company_id: companyId,
+    job_site_id: jobSiteId,
+    version_id: versionId,
+    page: 0,
+    title: 'Plan summary',
+    result,
+    created_by: u.user?.id ?? null,
+  } as never);
+  if (insErr) throw insErr;
+  onProgress('Done', 1);
+  return result;
+}

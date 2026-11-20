@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/Toast';
 import type { PlanAiPage } from '@/lib/database.types';
-import { findSchedulePages, openPdf, readPagesWithAi, type AiResult, type PageCandidate } from './ai';
+import { findSchedulePages, openPdf, readPagesWithAi, summarizeWithAi, type AiResult, type AiSummary, type PageCandidate } from './ai';
 
 const MAX_PAGES = 6;
 
@@ -41,18 +41,24 @@ export function AiTab({ jobSiteId, versionId, isOwner }: { jobSiteId: string; ve
     onError: (e) => showToast('Could not delete', errorMessage(e, 'Try again.')),
   });
 
-  const list = pages.data ?? [];
+  const all = pages.data ?? [];
+  const summaryRow = all.find((p) => p.page === 0);
+  const list = all.filter((p) => p.page !== 0);
   const fixtures = list.flatMap((p) => ((p.result as AiResult).fixtures ?? []).map((f) => ({ ...f, page: p.page })));
 
   return (
     <div className="space-y-4">
       {isOwner && <AiRunner jobSiteId={jobSiteId} versionId={versionId} onDone={() => qc.invalidateQueries({ queryKey: ['plan-ai', jobSiteId, versionId] })} />}
 
+      {summaryRow && <SummaryCard s={summaryRow.result as AiSummary} />}
+
       {pages.isLoading ? null : list.length === 0 ? (
+        summaryRow ? null : (
         <EmptyState
           title="Nothing read yet"
-          description={isOwner ? 'Pick the plan PDF above and let AI read the legend, light fixture schedule and panel schedules.' : 'The owner has not run AI reading on this plan yet.'}
+          description={isOwner ? 'Pick the plan PDF above: AI writes a briefing of the whole plan and reads the legend and schedules.' : 'The owner has not run AI reading on this plan yet.'}
         />
+        )
       ) : (
         <>
           {fixtures.length > 0 && (
@@ -179,6 +185,20 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
     }
   };
 
+  const summarize = async () => {
+    if (!doc) return;
+    setErr(null);
+    try {
+      await summarizeWithAi({ doc, companyId, jobSiteId, versionId, onProgress: (m, p) => setBusy({ m, p }) });
+      showToast('Plan summary ready', 'Scroll down to read it');
+      onDone();
+    } catch (e) {
+      setErr(errorMessage(e, 'AI summary failed.'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const run = async () => {
     if (!doc || !cands) return;
     setErr(null);
@@ -207,11 +227,12 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
       <CardBody>
         <div className="mb-2 flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-volt-600" />
-          <h3 className="font-semibold text-ink">Read legends and schedules with AI</h3>
+          <h3 className="font-semibold text-ink">Read the plan with AI</h3>
         </div>
         <p className="mb-3 text-sm text-ink-muted">
-          Pick the same plan PDF. Pages with legends, light fixture schedules and panel schedules are found automatically;
-          only the pages you tick are sent to the AI (about 2–5 cents per page).
+          Pick the same plan PDF. <b>Summarize</b> gives a briefing of the whole set: scope, panels and feeders, fixture
+          counts, fire alarm, demolition and what to watch out for (a few cents). You can also send the legend and schedule
+          pages as pictures for an exact table (about 2–5 cents per page).
         </p>
         <input
           type="file"
@@ -220,6 +241,12 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
           onChange={(e) => onFile(e.target.files?.[0])}
           className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-navy-50 file:px-3 file:py-2 file:text-sm file:font-medium"
         />
+
+        {!!doc && !busy && (
+          <Button className="mt-3" variant="primary" icon={<Sparkles className="h-4 w-4" />} onClick={summarize}>
+            Summarize the whole plan
+          </Button>
+        )}
 
         {cands && (
           <div className="mt-3">
@@ -264,6 +291,76 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
           </div>
         )}
         {err && <p className="mt-3 text-sm text-red-700">{err}</p>}
+      </CardBody>
+    </Card>
+  );
+}
+
+function Section({ title, items }: { title: string; items?: string[] }) {
+  if (!items?.length) return null;
+  return (
+    <div>
+      <h4 className="mb-1 text-sm font-semibold text-ink">{title}</h4>
+      <ul className="list-disc space-y-0.5 pl-5 text-sm text-ink">
+        {items.map((t, i) => <li key={i}>{t}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function SummaryCard({ s }: { s: AiSummary }) {
+  return (
+    <Card className="border-volt-300">
+      <CardBody className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-volt-600" />
+          <h3 className="text-lg font-semibold text-ink">Plan summary (AI)</h3>
+        </div>
+        {s.project && <p className="text-sm font-medium text-ink">{s.project}</p>}
+        {s.scope && <p className="text-sm text-ink-muted">{s.scope}</p>}
+
+        {(s.sheets?.length ?? 0) > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm font-semibold text-ink">Sheets</h4>
+            <div className="grid gap-x-6 text-sm sm:grid-cols-2">
+              {s.sheets!.map((x, i) => (
+                <p key={i}><b className="mr-1.5">{x.number}</b>{x.title}</p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Section title="Power, panels and equipment" items={s.power} />
+
+        {(s.lighting?.length ?? 0) > 0 && (
+          <div>
+            <h4 className="mb-1 text-sm font-semibold text-ink">Lighting</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-xs uppercase text-ink-muted">
+                  <tr><th className="py-1 pr-3">Type</th><th className="pr-3">Description</th><th className="pr-3 text-right">Count</th><th className="pr-3 text-right">EM</th></tr>
+                </thead>
+                <tbody>
+                  {s.lighting!.map((f, i) => (
+                    <tr key={i} className="border-t border-navy-100 align-top">
+                      <td className="py-1.5 pr-3 font-semibold">{f.type}</td>
+                      <td className="pr-3">{f.description}</td>
+                      <td className="pr-3 text-right tabular-nums">{f.count ?? '—'}</td>
+                      <td className="pr-3 text-right tabular-nums">{f.emergency ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <Section title="Lighting controls" items={s.controls} />
+        <Section title="Fire alarm" items={s.fire_alarm} />
+        <Section title="Low voltage" items={s.low_voltage} />
+        <Section title="Demolition" items={s.demolition} />
+        <Section title="Watch out" items={s.watch_out} />
+        <p className="text-xs text-ink-subtle">Written by AI from the text of the drawings — check quantities on the plan before ordering.</p>
       </CardBody>
     </Card>
   );
