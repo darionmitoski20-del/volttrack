@@ -130,22 +130,56 @@ export async function readPagesWithAi(opts: {
   return saved;
 }
 
-// ---- Whole-plan summary --------------------------------------------------------------
+// ---- Whole-plan report (background AI job) ------------------------------------------
 
-export interface AiFixtureCount { type?: string; description?: string; count?: number | null; emergency?: string | number | null }
-export interface AiSummary {
-  kind: 'summary';
-  project?: string;
+export interface AiCount { item?: string; count?: number | null; category?: string }
+export interface AiReport {
+  model?: string;
+  project?: { name?: string; address?: string; owner?: string; architect?: string; engineer?: string; issue_date?: string } | string;
   scope?: string;
-  sheets?: { number?: string; title?: string }[];
-  power?: string[];
-  lighting?: AiFixtureCount[];
-  controls?: string[];
-  fire_alarm?: string[];
-  low_voltage?: string[];
+  sheets?: { number?: string; title?: string; discipline?: string }[];
+  disciplines?: { name?: string; summary?: string; items?: string[] }[];
+  floors?: { name?: string; totals?: AiCount[]; rooms?: { room?: string; items?: AiCount[] }[] }[];
+  lighting?: { type?: string; description?: string; manufacturer?: string; catalog?: string; watts?: string; mounting?: string; count?: number | null; emergency_count?: number | null }[];
+  panels?: { name?: string; status?: string; voltage?: string; main?: string; location?: string; fed_from?: string; feeder?: string; circuits?: { ckt?: string; description?: string; breaker?: string; wire?: string }[] }[];
+  fire_alarm?: { summary?: string; devices?: AiCount[]; notes?: string[] };
+  materials?: { category?: string; item?: string; quantity?: number | string | null; unit?: string; basis?: string }[];
   demolition?: string[];
-  watch_out?: string[];
+  risks?: string[];
+  rfi?: string[];
+  changes?: string[];
 }
+
+async function callAi(body: Record<string, unknown>): Promise<any> {
+  const { data, error } = await supabase.functions.invoke('plan-ai', { body });
+  if (error) {
+    let msg = error.message;
+    try {
+      const b = await (error as any).context?.json?.();
+      if (b?.error) msg = b.error;
+    } catch { /* keep message */ }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+/** Starts the AI report for a plan version. The server sends the stored PDF; the text is a fallback for big PDFs. */
+export async function startAiReport(opts: { companyId: string; versionId: string; doc?: any; onProgress?: (m: string, p: number) => void }) {
+  let text = '';
+  if (opts.doc) text = await planText(opts.doc, (p) => opts.onProgress?.('Preparing the plan for AI…', p));
+  opts.onProgress?.('Sending the plan to AI…', 1);
+  return callAi({ action: 'start', company_id: opts.companyId, version_id: opts.versionId, text });
+}
+
+export const pollAiReport = (companyId: string, versionId: string) =>
+  callAi({ action: 'poll', company_id: companyId, version_id: versionId }) as Promise<{ status: string; error?: string }>;
+
+export const askAi = (companyId: string, versionId: string, question: string) =>
+  callAi({ action: 'ask', company_id: companyId, version_id: versionId, question }) as Promise<{ id: string; status: string }>;
+
+export const pollAsk = (companyId: string, questionId: string) =>
+  callAi({ action: 'poll_ask', company_id: companyId, question_id: questionId }) as Promise<{ status: string }>;
 
 /** Text of every page (lines in reading order) plus counts of short tags per page. */
 export async function planText(doc: any, onProgress?: (p: number) => void): Promise<string> {
@@ -176,42 +210,4 @@ export async function planText(doc: any, onProgress?: (p: number) => void): Prom
     onProgress?.(p / doc.numPages);
   }
   return parts.join('\n');
-}
-
-/** Sends the whole plan's text to the AI and stores the briefing as page 0. */
-export async function summarizeWithAi(opts: {
-  doc: any;
-  companyId: string;
-  jobSiteId: string;
-  versionId: string;
-  onProgress: (msg: string, frac: number) => void;
-}): Promise<AiSummary> {
-  const { doc, companyId, jobSiteId, versionId, onProgress } = opts;
-  onProgress('Reading the text of every sheet…', 0);
-  const text = await planText(doc, (p) => onProgress('Reading the text of every sheet…', p * 0.3));
-  onProgress('AI is reading the whole plan (about 1 minute)…', 0.35);
-  const { data, error } = await supabase.functions.invoke('plan-ai', { body: { company_id: companyId, mode: 'summary', text } });
-  if (error) {
-    let msg = error.message;
-    try {
-      const body = await (error as any).context?.json?.();
-      if (body?.error) msg = body.error;
-    } catch { /* keep message */ }
-    throw new Error(msg);
-  }
-  const result = { ...(data?.result ?? {}), kind: 'summary' } as AiSummary;
-  const { data: u } = await supabase.auth.getUser();
-  await supabase.from('plan_ai_pages').delete().eq('version_id', versionId).eq('page', 0);
-  const { error: insErr } = await supabase.from('plan_ai_pages').insert({
-    company_id: companyId,
-    job_site_id: jobSiteId,
-    version_id: versionId,
-    page: 0,
-    title: 'Plan summary',
-    result,
-    created_by: u.user?.id ?? null,
-  } as never);
-  if (insErr) throw insErr;
-  onProgress('Done', 1);
-  return result;
 }

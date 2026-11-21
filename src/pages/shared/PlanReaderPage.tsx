@@ -19,8 +19,9 @@ import { errorMessage } from '@/lib/supabase';
 import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanDiffRow } from '@/lib/database.types';
 import { PlanViewer } from '@/features/planreader/PlanViewer';
-import { AiTab, SummaryCard, useAiSummary } from '@/features/planreader/AiTab';
-import { openPdf, summarizeWithAi } from '@/features/planreader/ai';
+import { AiTab } from '@/features/planreader/AiTab';
+import { AiReportPanel } from '@/features/planreader/AiReport';
+import { openPdf, startAiReport } from '@/features/planreader/ai';
 import { uploadPlan } from '@/features/planreader/service';
 import { CLASSES, UNCERTAIN } from '@/features/planreader/engine';
 import { DISCIPLINE_ORDER, isCountable, roomLabel } from '@/features/planreader/labels';
@@ -38,7 +39,7 @@ export function PlanReaderPage() {
   const [tab, setTab] = useState<Tab>('plan');
 
   const tabs: [Tab, string][] = [
-    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['legend', 'AI summary'], ['revisions', 'Revisions'],
+    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['legend', 'Legend (AI)'], ['revisions', 'Revisions'],
   ];
   if (isOwner) tabs.push(['review', 'Review']);
 
@@ -98,7 +99,7 @@ export function PlanReaderPage() {
               />
             ) : tab === 'overview' ? (
               <div className="space-y-4">
-                <OverviewSummary jobSiteId={id} versionId={p.version.id} />
+                <AiReportPanel jobSiteId={id} versionId={p.version.id} isOwner={isOwner} />
                 <OverviewTab plan={p} work={work.data ?? new Map()} />
               </div>
             ) : tab === 'rooms' ? (
@@ -137,19 +138,18 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
       qc.invalidateQueries({ queryKey: ['plan-current', jobSiteId] });
       qc.invalidateQueries({ queryKey: ['plan-versions', jobSiteId] });
 
-      // Then Claude reads the whole set and writes the briefing shown on Overview.
+      // Then the AI reads the whole set in the background; the report appears on Overview.
       // Never blocks the upload: if AI is not set up or fails, the plan is still saved.
       try {
-        setProg({ m: 'AI is reading the plan…', p: 0 });
+        setProg({ m: 'Sending the plan to AI…', p: 0 });
         const doc = await openPdf(file);
-        await summarizeWithAi({
-          doc,
+        await startAiReport({
           companyId,
-          jobSiteId,
           versionId: v.id,
+          doc,
           onProgress: (m, p) => setProg({ m, p: Math.round(p * 100) }),
         });
-        showToast('AI summary ready', 'See it on the Overview tab');
+        showToast('AI is reading the plan', 'The report appears on the Overview tab in a few minutes');
       } catch (aiErr) {
         const msg = errorMessage(aiErr, '');
         showToast(
@@ -157,7 +157,7 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
           msg.includes('API_KEY') || msg.includes('No AI key') ? 'Add an AI API key (Claude or OpenAI) in Supabase to turn it on.' : msg || 'Try again from the AI summary tab.',
         );
       }
-      qc.invalidateQueries({ queryKey: ['plan-ai', jobSiteId] });
+      qc.invalidateQueries({ queryKey: ['plan-ai-report'] });
       setFile(null);
     } catch (e) {
       // Keep the first stack line so errors on phones can be traced from a screenshot.
@@ -220,11 +220,6 @@ function useGrouped(plan: PlanData) {
     const withMeta = plan.items.filter((i) => i.cls !== 'UNKNOWN').map((i) => ({ ...i, disc: disc.get(i.sheet)?.discipline ?? '', floor: disc.get(i.sheet)?.floor ?? '' }));
     return { floors, items: withMeta };
   }, [plan]);
-}
-
-function OverviewSummary({ jobSiteId, versionId }: { jobSiteId: string; versionId: string }) {
-  const q = useAiSummary(jobSiteId, versionId);
-  return q.data ? <SummaryCard s={q.data} /> : null;
 }
 
 function OverviewTab({ plan, work }: { plan: PlanData; work: Map<string, WorkState> }) {

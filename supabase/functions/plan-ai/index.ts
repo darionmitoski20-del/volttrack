@@ -1,20 +1,24 @@
 // VoltTrack — plan-ai edge function
 //
-// Reads legend / schedule pages of an electrical plan with Claude and returns
-// structured JSON (symbol legend, light fixture schedule, panel schedules, notes).
+// Reads electrical drawing sets with AI.
+//   action "start"     (owner)  : sends the plan PDF to the AI in the background and
+//                                 stores a running report row (plan_ai_pages, page 0)
+//   action "poll"      (member) : checks the background job and saves the finished report
+//   action "ask"       (member) : asks a question about the plan (background)
+//   action "poll_ask"  (member) : checks a question and saves the answer
+//   no action, images  (owner)  : reads legend / schedule page images (returns JSON)
 //
-// Deploy via the Supabase Dashboard: Edge Functions -> Deploy a new function ->
-// Via Editor -> name it "plan-ai" -> paste this file. Keep "Verify JWT" ON.
+// Deploy via the Supabase Dashboard: Edge Functions -> plan-ai -> Code -> paste -> Deploy.
+// "Verify JWT with legacy secret" must be OFF (this function checks the user itself).
 //
-// Required secret (Edge Functions -> Secrets), one of:
-//   ANTHROPIC_API_KEY  - from console.anthropic.com (Claude)
-//   OPENAI_API_KEY     - from platform.openai.com (OpenAI)
-//   AI_PROVIDER        - optional, "anthropic" or "openai" when both keys are set
-//   OPENAI_MODEL       - optional OpenAI model name
-// Optional:
-//   ANTHROPIC_MODEL    - defaults to claude-sonnet-5-5
-//   PLAN_AI_DAILY_PAGES - pages per company per 24 h (default 30)
-// SUPABASE_URL and SUPABASE_ANON_KEY are injected automatically.
+// Secrets (Edge Functions -> Secrets), at least one key:
+//   OPENAI_API_KEY      - platform.openai.com (runs in the background, best for big PDFs)
+//   ANTHROPIC_API_KEY   - console.anthropic.com
+//   AI_PROVIDER         - optional, "openai" or "anthropic" when both keys are set
+//   OPENAI_MODEL        - optional, tried first
+//   ANTHROPIC_MODEL     - optional, default claude-opus-5-5
+//   PLAN_AI_DAILY       - optional, plan reports per company per 24 h (default 20)
+// SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected automatically.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -23,146 +27,351 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-sonnet-5-5';
-const DAILY = Number(Deno.env.get('PLAN_AI_DAILY_PAGES') ?? '30');
+const SB_URL = Deno.env.get('SUPABASE_URL')!;
+const SB_ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
+const SB_SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const OPENAI_KEY = Deno.env.get('OPENAI_API_KEY') ?? '';
+const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
+const PROVIDER = Deno.env.get('AI_PROVIDER') ?? (OPENAI_KEY ? 'openai' : ANTHROPIC_KEY ? 'anthropic' : '');
+// Strongest first; a model the account cannot use is skipped.
+const OPENAI_MODELS = [Deno.env.get('OPENAI_MODEL'), 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5', 'gpt-4.1']
+  .filter(Boolean) as string[];
+const CLAUDE_MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-opus-5-5';
+const DAILY = Number(Deno.env.get('PLAN_AI_DAILY') ?? '20');
+const DAILY_Q = 60;
+const MAX_PDF = 32 * 1024 * 1024;
 
-const PROMPT = `These images are tiles (left-to-right, top-to-bottom) of ONE sheet from a US electrical
+const REPORT_PROMPT = `You are a senior US electrical estimator. The attached file (or text) is ONE construction drawing set.
+Read EVERY sheet of every discipline. Return ONLY a JSON object, in English, with exactly this shape
+(use [] or null when something is not in the set; never invent data; prefix uncertain counts' notes with "~"):
+
+{
+  "project": { "name": "", "address": "", "owner": "", "architect": "", "engineer": "", "issue_date": "" },
+  "scope": "3-5 sentences: what work this set covers",
+  "sheets": [ { "number": "E.2.0", "title": "", "discipline": "Electrical" } ],
+  "disciplines": [ { "name": "Electrical | Mechanical | Plumbing | Fire Alarm | Low Voltage | Architectural | ...",
+                     "summary": "2-3 sentences", "items": [ "key work items / equipment for this discipline" ] } ],
+  "floors": [ { "name": "First floor",
+                "totals": [ { "category": "Lighting | Switches & controls | Receptacles | Data & low voltage | Fire alarm | Equipment & connections | Other",
+                              "item": "e.g. Duplex receptacle 20A TR", "count": 10 } ],
+                "rooms": [ { "room": "117 BOE Office", "items": [ { "item": "", "count": 1 } ] } ] } ],
+  "lighting": [ { "type": "A", "description": "", "manufacturer": "", "catalog": "", "watts": "", "mounting": "", "count": 0, "emergency_count": 0 } ],
+  "panels": [ { "name": "", "status": "new | existing | modified", "voltage": "", "main": "", "location": "", "fed_from": "", "feeder": "",
+                "circuits": [ { "ckt": "", "description": "", "breaker": "", "wire": "" } ] } ],
+  "fire_alarm": { "summary": "", "devices": [ { "item": "", "count": 0 } ], "notes": [ "" ] },
+  "materials": [ { "category": "Boxes | Plates | Devices | Fixtures | Wire | Conduit | Fittings | Breakers & panels | Supports | Other",
+                   "item": "", "quantity": 0, "unit": "ea | ft | box", "basis": "how it was estimated" } ],
+  "demolition": [ "" ],
+  "risks": [ "risks and things that cost money or need field verification" ],
+  "rfi": [ "ready-to-send questions for the architect / engineer" ],
+  "changes": [ "" ]
+}
+
+Counting rules: count only NEW work shown on floor plans (not legends, schedules, existing-to-remain or demolition).
+Count every floor separately and every room on it. The materials list is a purchasing take-off: boxes, plates,
+devices, fixtures, wire by size (estimate lengths from the drawings' scale), conduit by size, fittings, breakers,
+supports. Panels: list every circuit shown in panel schedules or on the plans.`;
+
+const IMAGE_PROMPT = `These images are tiles (left-to-right, top-to-bottom) of ONE sheet from a US electrical
 construction drawing set. Read every legend, schedule and note on it and return ONLY a JSON object,
 no other text, with this shape (use [] when a section is not on the sheet, never invent data):
+{ "sheet": "", "legend": [ { "tag": "", "description": "" } ],
+  "fixtures": [ { "type": "", "description": "", "manufacturer": "", "catalog": "", "lamp": "", "voltage": "", "watts": "", "mounting": "", "notes": "" } ],
+  "panels": [ { "name": "", "voltage": "", "main": "", "location": "", "circuits": [ { "ckt": "", "description": "", "breaker": "" } ] } ],
+  "notes": [ "" ] }`;
 
-{
-  "sheet": "sheet number and title as printed, e.g. E0.01 ELECTRICAL SYMBOLS AND LEGEND",
-  "legend": [ { "tag": "symbol tag or abbreviation if any, e.g. GFI, WP, OS", "description": "what the symbol means" } ],
-  "fixtures": [ { "type": "fixture type mark, e.g. L1 or A", "description": "", "manufacturer": "", "catalog": "", "lamp": "lamp / LED / lumens", "voltage": "", "watts": "", "mounting": "", "notes": "" } ],
-  "panels": [ { "name": "panel name", "voltage": "e.g. 208Y/120V 3PH 4W", "main": "main breaker / MLO and amps", "location": "", "circuits": [ { "ckt": "circuit number", "description": "load", "breaker": "e.g. 20/1" } ] } ],
-  "notes": [ "important general or keyed notes for the electrician, short" ]
-}
-
-Copy text exactly as printed. Keep descriptions short. If text is unreadable, leave the field "".`;
-
-const SUMMARY_PROMPT = `You are an experienced US electrical estimator. Below is the TEXT of every page of one
-electrical drawing set (extracted from the PDF), plus counts of short tags found on each page (fixture
-type marks, sensor tags, etc.). Write a project briefing for the electrical contractor.
-
-Write ALL values in Macedonian (Cyrillic script). Keep technical terms, model numbers, panel names and
-sheet numbers in English as printed. Return ONLY a JSON object, no other text:
-
-{
-  "project": "project name, address, owner, architect, engineer, issue date",
-  "scope": "2-4 sentences: what work this set covers",
-  "sheets": [ { "number": "E.2.0", "title": "short title" } ],
-  "power": [ "new/modified panels, feeders, breakers, load calculation, important equipment (AC, heaters, etc.) with breaker sizes" ],
-  "lighting": [ { "type": "A", "description": "fixture + manufacturer + watts", "count": 12, "emergency": "how many EM if known" } ],
-  "controls": [ "lighting control devices and counts (sensors, wall stations, room controllers)" ],
-  "fire_alarm": [ "fire alarm devices and counts, compatibility notes" ],
-  "low_voltage": [ "data, WAP, PA, card readers, CCTV etc." ],
-  "demolition": [ "what must be removed" ],
-  "watch_out": [ "risks, coordination items, things to verify in field, notes that cost money" ]
-}
-
-Use the tag counts for fixture and device quantities only from floor plan pages (not legends or
-schedules). If a quantity is not clear, say "~" before it or leave count null. Never invent data.`;
+const QA_PROMPT = `Answer the question about the attached electrical drawing set for an electrical contractor.
+Be specific and short. Mention sheet numbers and rooms. If the drawings do not say, say so.
+Answer in the same language as the question.`;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
+function parseJson(answer: string): unknown {
+  const m = answer.match(/\{[\s\S]*\}/);
+  try {
+    return JSON.parse(m ? m[0] : answer);
+  } catch {
+    return { scope: answer.slice(0, 4000) };
+  }
+}
+
+function modelProblem(status: number, msg: string, code: string) {
+  return status === 404 || code === 'model_not_found' ||
+    (/model/i.test(msg) && /(not exist|not found|no access|do not have access|not available|unsupported|not supported)/i.test(msg));
+}
+
+// ---- OpenAI ------------------------------------------------------------------------
+
+async function openaiUpload(blob: Blob, name: string): Promise<string> {
+  const fd = new FormData();
+  fd.append('purpose', 'user_data');
+  fd.append('file', new File([blob], name, { type: 'application/pdf' }));
+  const r = await fetch('https://api.openai.com/v1/files', { method: 'POST', headers: { Authorization: `Bearer ${OPENAI_KEY}` }, body: fd });
+  const out = await r.json();
+  if (!r.ok) throw new Error(`OpenAI file upload: ${out?.error?.message ?? r.status}`);
+  return out.id;
+}
+
+// deno-lint-ignore no-explicit-any
+async function openaiStart(content: any[], asJson: boolean): Promise<{ id: string; model: string }> {
+  let last = '';
+  for (const model of OPENAI_MODELS) {
+    const body: Record<string, unknown> = {
+      model,
+      background: true,
+      input: [{ role: 'user', content }],
+      max_output_tokens: 60000,
+    };
+    if (asJson) body.text = { format: { type: 'json_object' } };
+    const r = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const out = await r.json();
+    if (r.ok) return { id: out.id, model };
+    last = out?.error?.message ?? `status ${r.status}`;
+    if (!modelProblem(r.status, last, String(out?.error?.code ?? ''))) break;
+  }
+  throw new Error(`OpenAI: ${last}`);
+}
+
+// deno-lint-ignore no-explicit-any
+async function openaiGet(id: string): Promise<any> {
+  const r = await fetch(`https://api.openai.com/v1/responses/${id}`, { headers: { Authorization: `Bearer ${OPENAI_KEY}` } });
+  const out = await r.json();
+  if (!r.ok) throw new Error(`OpenAI: ${out?.error?.message ?? r.status}`);
+  return out;
+}
+
+// deno-lint-ignore no-explicit-any
+function openaiText(out: any): string {
+  if (typeof out.output_text === 'string') return out.output_text;
+  // deno-lint-ignore no-explicit-any
+  return (out.output ?? []).flatMap((o: any) => o.content ?? []).filter((c: any) => c.type === 'output_text').map((c: any) => c.text).join('');
+}
+
+// ---- Claude (answers right away) ----------------------------------------------------
+
+// deno-lint-ignore no-explicit-any
+async function claude(content: any[], maxTokens: number): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+  });
+  const out = await r.json();
+  if (!r.ok) throw new Error(`Claude: ${out?.error?.message ?? r.status}`);
+  // deno-lint-ignore no-explicit-any
+  return (out.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+}
+
+function toBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// ---- handler ------------------------------------------------------------------------
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try {
     const auth = req.headers.get('Authorization') ?? '';
-    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: auth } },
-    });
-    const { data: u } = await sb.auth.getUser();
+    const userClient = createClient(SB_URL, SB_ANON, { global: { headers: { Authorization: auth } } });
+    const { data: u } = await userClient.auth.getUser();
     if (!u.user) return json({ error: 'Not signed in' }, 401);
+    const admin = createClient(SB_URL, SB_SERVICE);
 
-    const { company_id, images, mode, text } = await req.json();
-    const { data: isOwner } = await sb.rpc('is_company_owner', { target_company: company_id });
-    if (!isOwner) return json({ error: 'Only the owner can use AI reading' }, 403);
-    const summary = mode === 'summary';
-    if (summary) {
-      if (typeof text !== 'string' || text.length < 50) return json({ error: 'No text found in the PDF' }, 400);
-    } else if (!Array.isArray(images) || images.length < 1 || images.length > 8) {
-      return json({ error: 'Send 1 to 8 images' }, 400);
-    }
-
-    // Daily limit per company, so a public demo cannot run up the AI bill.
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const { count } = await sb
-      .from('plan_ai_pages')
-      .select('id', { count: 'exact', head: true })
+    const body = await req.json();
+    const { company_id } = body;
+    const { data: member } = await admin
+      .from('company_members')
+      .select('role')
       .eq('company_id', company_id)
-      .gte('created_at', since);
-    if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} pages). Try again tomorrow.` }, 429);
+      .eq('user_id', u.user.id)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (!member) return json({ error: 'Not a member of this company' }, 403);
+    const isOwner = member.role === 'owner';
+    if (!PROVIDER) return json({ error: 'No AI key is set on the server (OPENAI_API_KEY or ANTHROPIC_API_KEY)' }, 500);
+    const action = body.action ?? 'images';
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
-    // Provider: Claude (ANTHROPIC_API_KEY) or OpenAI (OPENAI_API_KEY).
-    // AI_PROVIDER = "anthropic" | "openai" picks one when both keys are set.
-    const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
-    const openaiKey = Deno.env.get('OPENAI_API_KEY');
-    const provider = Deno.env.get('AI_PROVIDER') ?? (anthropicKey ? 'anthropic' : openaiKey ? 'openai' : '');
-    if (!provider) return json({ error: 'No AI key is set on the server (ANTHROPIC_API_KEY or OPENAI_API_KEY)' }, 500);
+    // ---------------------------------------------------------------- start a plan report
+    if (action === 'start') {
+      if (!isOwner) return json({ error: 'Only the owner can start AI reading' }, 403);
+      const { version_id, text } = body;
+      const { data: v } = await admin.from('plan_versions').select('id, n, job_site_id, company_id, pdf_path, file_name').eq('id', version_id).maybeSingle();
+      if (!v || v.company_id !== company_id) return json({ error: 'Plan version not found' }, 404);
 
-    const promptText = summary ? `${SUMMARY_PROMPT}\n\n=== DRAWING SET TEXT ===\n${text.slice(0, 400000)}` : PROMPT;
-    const imgs: string[] = summary ? [] : images;
+      const { count } = await admin.from('plan_ai_pages').select('id', { count: 'exact', head: true })
+        .eq('company_id', company_id).eq('page', 0).gte('created_at', since);
+      if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} plans). Try again tomorrow.` }, 429);
 
-    let answer = '';
-    let usage: unknown = null;
-    if (provider === 'openai') {
-      if (!openaiKey) return json({ error: 'OPENAI_API_KEY is not set on the server' }, 500);
-      const models = [Deno.env.get('OPENAI_MODEL'), 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5-mini', 'gpt-4.1-mini'].filter(Boolean) as string[];
-      const content = [
-        ...imgs.map((b) => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b}`, detail: 'high' } })),
-        { type: 'text', text: promptText },
-      ];
-      let lastErr = '';
-      for (const model of models) {
-        const r = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${openaiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'user', content }] }),
-        });
-        const out = await r.json();
-        if (r.ok) {
-          answer = out.choices?.[0]?.message?.content ?? '';
-          usage = { model, ...out.usage };
-          lastErr = '';
-          break;
-        }
-        lastErr = out?.error?.message ?? `AI request failed (${r.status})`;
-        // Only try the next model when this one does not exist / is not available to the account.
-        const code = String(out?.error?.code ?? '');
-        if (!(r.status === 404 || code === 'model_not_found' || /model/i.test(lastErr))) break;
+      // The previous version's report, so the AI can list what changed.
+      const { data: prevV } = await admin.from('plan_versions').select('id').eq('job_site_id', v.job_site_id)
+        .eq('status', 'done').lt('n', v.n).order('n', { ascending: false }).limit(1).maybeSingle();
+      let prevReport = '';
+      if (prevV) {
+        const { data: pr } = await admin.from('plan_ai_pages').select('result').eq('version_id', prevV.id).eq('page', 0).eq('status', 'done').maybeSingle();
+        if (pr?.result) prevReport = JSON.stringify(pr.result).slice(0, 80000);
       }
-      if (lastErr) return json({ error: `OpenAI: ${lastErr}` }, 502);
-    } else {
-      if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY is not set on the server' }, 500);
-      const content = [
-        ...imgs.map((b) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
-        { type: 'text', text: promptText },
-      ];
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 16000, messages: [{ role: 'user', content }] }),
-      });
-      const out = await r.json();
-      if (!r.ok) return json({ error: out?.error?.message ?? `AI request failed (${r.status})` }, 502);
-      answer = (out.content ?? [])
-        .filter((c: { type: string }) => c.type === 'text')
-        .map((c: { text: string }) => c.text)
-        .join('');
-      usage = out.usage;
+      const prompt = REPORT_PROMPT + (prevReport
+        ? `\n\nThis is a REVISION. Report of the previous version (JSON) is below. Fill "changes" with what is added, removed or different:\n${prevReport}`
+        : '\n\nThis is the first version: return "changes": [].');
+
+      let pdf: Blob | null = null;
+      if (v.pdf_path) {
+        const { data: dl } = await admin.storage.from('plans').download(v.pdf_path);
+        if (dl && dl.size <= MAX_PDF) pdf = dl;
+      }
+      const planText = typeof text === 'string' ? text.slice(0, 400000) : '';
+      if (!pdf && !planText) return json({ error: 'No PDF or text to read' }, 400);
+
+      await admin.from('plan_ai_pages').delete().eq('version_id', version_id).eq('page', 0);
+      const row = {
+        company_id, job_site_id: v.job_site_id, version_id, page: 0, title: 'Plan report',
+        created_by: u.user.id, updated_at: new Date().toISOString(),
+      };
+
+      if (PROVIDER === 'openai') {
+        // deno-lint-ignore no-explicit-any
+        const content: any[] = [];
+        let fileId: string | null = null;
+        if (pdf) {
+          fileId = await openaiUpload(pdf, v.file_name || 'plan.pdf');
+          content.push({ type: 'input_file', file_id: fileId });
+        } else {
+          content.push({ type: 'input_text', text: `DRAWING SET TEXT (the PDF was too large to attach):\n${planText}` });
+        }
+        content.push({ type: 'input_text', text: prompt });
+        const job = await openaiStart(content, true);
+        await admin.from('plan_ai_pages').insert({ ...row, status: 'running', job_id: job.id, file_id: fileId, result: { model: job.model } });
+        return json({ status: 'running' });
+      }
+
+      // Claude: reads right away (smaller plans).
+      // deno-lint-ignore no-explicit-any
+      const content: any[] = pdf
+        ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(await pdf.arrayBuffer()) } }]
+        : [{ type: 'text', text: `DRAWING SET TEXT:\n${planText}` }];
+      content.push({ type: 'text', text: prompt });
+      try {
+        const answer = await claude(content, 32000);
+        const result = { ...(parseJson(answer) as object), model: CLAUDE_MODEL };
+        await admin.from('plan_ai_pages').insert({ ...row, status: 'done', result });
+        return json({ status: 'done' });
+      } catch (e) {
+        await admin.from('plan_ai_pages').insert({ ...row, status: 'error', error: String(e instanceof Error ? e.message : e), result: {} });
+        throw e;
+      }
     }
 
-    const m = answer.match(/\{[\s\S]*\}/);
-    let result: unknown;
-    try {
-      result = JSON.parse(m ? m[0] : answer);
-    } catch {
-      result = { notes: [answer.slice(0, 4000)] };
+    // ---------------------------------------------------------------- check a plan report
+    if (action === 'poll') {
+      const { version_id } = body;
+      const { data: row } = await admin.from('plan_ai_pages').select('*').eq('version_id', version_id).eq('page', 0)
+        .eq('company_id', company_id).maybeSingle();
+      if (!row) return json({ status: 'none' });
+      if (row.status !== 'running' || !row.job_id || PROVIDER !== 'openai') return json({ status: row.status, error: row.error });
+      const out = await openaiGet(row.job_id);
+      if (out.status === 'completed') {
+        const result = { ...(parseJson(openaiText(out)) as object), model: out.model };
+        await admin.from('plan_ai_pages').update({ status: 'done', result, updated_at: new Date().toISOString() }).eq('id', row.id);
+        return json({ status: 'done' });
+      }
+      if (['failed', 'cancelled', 'incomplete'].includes(out.status)) {
+        const err = out.error?.message ?? out.incomplete_details?.reason ?? out.status;
+        // An answer cut short can still hold a usable report.
+        const partial = out.status === 'incomplete' ? openaiText(out) : '';
+        await admin.from('plan_ai_pages').update({
+          status: partial ? 'done' : 'error',
+          error: partial ? `Report may be incomplete (${err})` : String(err),
+          result: partial ? { ...(parseJson(partial) as object), model: out.model } : row.result,
+          updated_at: new Date().toISOString(),
+        }).eq('id', row.id);
+        return json({ status: partial ? 'done' : 'error', error: err });
+      }
+      return json({ status: 'running' });
     }
-    return json({ result, usage });
+
+    // ---------------------------------------------------------------- ask about the plan
+    if (action === 'ask') {
+      const { version_id, question } = body;
+      const q = String(question ?? '').trim().slice(0, 2000);
+      if (!q) return json({ error: 'Empty question' }, 400);
+      const { count } = await admin.from('plan_ai_questions').select('id', { count: 'exact', head: true })
+        .eq('company_id', company_id).gte('created_at', since);
+      if ((count ?? 0) >= DAILY_Q) return json({ error: `Daily question limit reached (${DAILY_Q}).` }, 429);
+      const { data: rep } = await admin.from('plan_ai_pages').select('job_site_id, file_id, result').eq('version_id', version_id)
+        .eq('page', 0).eq('company_id', company_id).maybeSingle();
+      if (!rep) return json({ error: 'Read the plan with AI first' }, 400);
+      const context = `REPORT OF THIS PLAN (JSON):\n${JSON.stringify(rep.result).slice(0, 120000)}`;
+      const base = { company_id, job_site_id: rep.job_site_id, version_id, user_id: u.user.id, question: q };
+
+      if (PROVIDER === 'openai') {
+        // deno-lint-ignore no-explicit-any
+        const content: any[] = [];
+        if (rep.file_id) content.push({ type: 'input_file', file_id: rep.file_id });
+        content.push({ type: 'input_text', text: `${QA_PROMPT}\n\n${context}\n\nQUESTION: ${q}` });
+        const job = await openaiStart(content, false);
+        const { data: ins } = await admin.from('plan_ai_questions').insert({ ...base, status: 'running', job_id: job.id }).select('id').single();
+        return json({ id: ins?.id, status: 'running' });
+      }
+      const answer = await claude([{ type: 'text', text: `${QA_PROMPT}\n\n${context}\n\nQUESTION: ${q}` }], 4000);
+      const { data: ins } = await admin.from('plan_ai_questions').insert({ ...base, status: 'done', answer }).select('id').single();
+      return json({ id: ins?.id, status: 'done' });
+    }
+
+    if (action === 'poll_ask') {
+      const { data: q } = await admin.from('plan_ai_questions').select('*').eq('id', body.question_id).eq('company_id', company_id).maybeSingle();
+      if (!q) return json({ status: 'none' });
+      if (q.status !== 'running' || !q.job_id || PROVIDER !== 'openai') return json({ status: q.status });
+      const out = await openaiGet(q.job_id);
+      if (out.status === 'completed' || out.status === 'incomplete') {
+        await admin.from('plan_ai_questions').update({ status: 'done', answer: openaiText(out) || '(no answer)' }).eq('id', q.id);
+        return json({ status: 'done' });
+      }
+      if (['failed', 'cancelled'].includes(out.status)) {
+        await admin.from('plan_ai_questions').update({ status: 'error', answer: out.error?.message ?? out.status }).eq('id', q.id);
+        return json({ status: 'error' });
+      }
+      return json({ status: 'running' });
+    }
+
+    // ---------------------------------------------------------------- legend / schedule images
+    if (!isOwner) return json({ error: 'Only the owner can use AI reading' }, 403);
+    const { images } = body;
+    if (!Array.isArray(images) || images.length < 1 || images.length > 8) return json({ error: 'Send 1 to 8 images' }, 400);
+    const { count } = await admin.from('plan_ai_pages').select('id', { count: 'exact', head: true })
+      .eq('company_id', company_id).gte('created_at', since);
+    if ((count ?? 0) >= DAILY * 3) return json({ error: 'Daily AI limit reached. Try again tomorrow.' }, 429);
+    let answer = '';
+    if (PROVIDER === 'openai') {
+      const content = [
+        ...images.map((b: string) => ({ type: 'input_image', image_url: `data:image/jpeg;base64,${b}`, detail: 'high' })),
+        { type: 'input_text', text: IMAGE_PROMPT },
+      ];
+      const job = await openaiStart(content, true);
+      // Small request: wait for it here (up to ~2 minutes).
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const out = await openaiGet(job.id);
+        if (out.status === 'completed' || out.status === 'incomplete') { answer = openaiText(out); break; }
+        if (['failed', 'cancelled'].includes(out.status)) throw new Error(out.error?.message ?? out.status);
+      }
+      if (!answer) return json({ error: 'AI took too long, try fewer pages' }, 504);
+    } else {
+      answer = await claude([
+        ...images.map((b: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
+        { type: 'text', text: IMAGE_PROMPT },
+      ], 16000);
+    }
+    return json({ result: parseJson(answer) });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }

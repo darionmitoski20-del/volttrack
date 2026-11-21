@@ -366,7 +366,25 @@ export interface PlanAiPage {
   page: number;
   title: string;
   result: unknown;
+  status: string;
+  job_id: string | null;
+  file_id: string | null;
+  error: string | null;
+  updated_at: string;
   created_by: string | null;
+  created_at: string;
+}
+
+export interface PlanAiQuestion {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  version_id: string;
+  user_id: string | null;
+  question: string;
+  answer: string | null;
+  status: string;
+  job_id: string | null;
   created_at: string;
 }
 
@@ -408,6 +426,7 @@ export interface Database {
       plan_symbols: TableDef<PlanSymbol>;
       plan_drawings: TableDef<PlanDrawing>;
       plan_ai_pages: TableDef<PlanAiPage>;
+      plan_ai_questions: TableDef<PlanAiQuestion>;
     };
     Views: Record<string, never>;
     Functions: {
