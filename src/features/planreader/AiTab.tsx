@@ -12,6 +12,24 @@ import { findSchedulePages, openPdf, readPagesWithAi, summarizeWithAi, type AiRe
 
 const MAX_PAGES = 6;
 
+/** The AI briefing of one plan version, if it has been written. */
+export function useAiSummary(jobSiteId: string, versionId: string) {
+  return useQuery({
+    queryKey: ['plan-ai', jobSiteId, versionId, 'summary'],
+    queryFn: async (): Promise<AiSummary | null> => {
+      const { data, error } = await supabase
+        .from('plan_ai_pages')
+        .select('result')
+        .eq('job_site_id', jobSiteId)
+        .eq('version_id', versionId)
+        .eq('page', 0)
+        .maybeSingle();
+      if (error) throw error;
+      return (data?.result as AiSummary | undefined) ?? null;
+    },
+  });
+}
+
 function useAiPages(jobSiteId: string, versionId: string) {
   return useQuery({
     queryKey: ['plan-ai', jobSiteId, versionId],
@@ -308,7 +326,7 @@ function Section({ title, items }: { title: string; items?: string[] }) {
   );
 }
 
-function SummaryCard({ s }: { s: AiSummary }) {
+export function SummaryCard({ s }: { s: AiSummary }) {
   return (
     <Card className="border-volt-300">
       <CardBody className="space-y-4">

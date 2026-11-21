@@ -19,7 +19,8 @@ import { errorMessage } from '@/lib/supabase';
 import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanDiffRow } from '@/lib/database.types';
 import { PlanViewer } from '@/features/planreader/PlanViewer';
-import { AiTab } from '@/features/planreader/AiTab';
+import { AiTab, SummaryCard, useAiSummary } from '@/features/planreader/AiTab';
+import { openPdf, summarizeWithAi } from '@/features/planreader/ai';
 import { uploadPlan } from '@/features/planreader/service';
 import { CLASSES, UNCERTAIN } from '@/features/planreader/engine';
 import { DISCIPLINE_ORDER, isCountable, roomLabel } from '@/features/planreader/labels';
@@ -96,7 +97,10 @@ export function PlanReaderPage() {
                 timezone={timezone}
               />
             ) : tab === 'overview' ? (
-              <OverviewTab plan={p} work={work.data ?? new Map()} />
+              <div className="space-y-4">
+                <OverviewSummary jobSiteId={id} versionId={p.version.id} />
+                <OverviewTab plan={p} work={work.data ?? new Map()} />
+              </div>
             ) : tab === 'rooms' ? (
               <RoomsTab plan={p} work={work.data ?? new Map()} />
             ) : tab === 'daily' ? (
@@ -132,6 +136,28 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
       showToast('Plan read', `${v.sheet_count} sheets, ${v.item_count} devices`);
       qc.invalidateQueries({ queryKey: ['plan-current', jobSiteId] });
       qc.invalidateQueries({ queryKey: ['plan-versions', jobSiteId] });
+
+      // Then Claude reads the whole set and writes the briefing shown on Overview.
+      // Never blocks the upload: if AI is not set up or fails, the plan is still saved.
+      try {
+        setProg({ m: 'AI is reading the plan…', p: 0 });
+        const doc = await openPdf(file);
+        await summarizeWithAi({
+          doc,
+          companyId,
+          jobSiteId,
+          versionId: v.id,
+          onProgress: (m, p) => setProg({ m, p: Math.round(p * 100) }),
+        });
+        showToast('AI summary ready', 'See it on the Overview tab');
+      } catch (aiErr) {
+        const msg = errorMessage(aiErr, '');
+        showToast(
+          msg.includes('ANTHROPIC_API_KEY') ? 'AI summary is not set up yet' : 'AI summary failed',
+          msg.includes('ANTHROPIC_API_KEY') ? 'Add the Claude API key in Supabase to turn it on.' : msg || 'Try again from the AI summary tab.',
+        );
+      }
+      qc.invalidateQueries({ queryKey: ['plan-ai', jobSiteId] });
       setFile(null);
     } catch (e) {
       // Keep the first stack line so errors on phones can be traced from a screenshot.
@@ -194,6 +220,11 @@ function useGrouped(plan: PlanData) {
     const withMeta = plan.items.filter((i) => i.cls !== 'UNKNOWN').map((i) => ({ ...i, disc: disc.get(i.sheet)?.discipline ?? '', floor: disc.get(i.sheet)?.floor ?? '' }));
     return { floors, items: withMeta };
   }, [plan]);
+}
+
+function OverviewSummary({ jobSiteId, versionId }: { jobSiteId: string; versionId: string }) {
+  const q = useAiSummary(jobSiteId, versionId);
+  return q.data ? <SummaryCard s={q.data} /> : null;
 }
 
 function OverviewTab({ plan, work }: { plan: PlanData; work: Map<string, WorkState> }) {
