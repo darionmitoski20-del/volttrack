@@ -12,7 +12,7 @@ import { askAi, pollAiReport, pollAsk, startAiReport, type AiCount, type AiRepor
 interface ReportRow { status: string; error: string | null; result: AiReport; updated_at: string }
 interface QuestionRow { id: string; question: string; answer: string | null; status: string; created_at: string; user: { full_name: string } | null }
 
-function useReportRow(jobSiteId: string, versionId: string) {
+export function useReportRow(jobSiteId: string, versionId: string) {
   return useQuery({
     queryKey: ['plan-ai-report', versionId],
     queryFn: async (): Promise<ReportRow | null> => {
@@ -233,6 +233,21 @@ function ReportView({ r, isOwner, onRerun, rerunning }: { r: AiReport; isOwner: 
   );
 }
 
+function Scope({ text }: { text: string }) {
+  const [more, setMore] = useState(false);
+  const long = text.length > 220;
+  return (
+    <p className="text-sm text-ink-muted">
+      {long && !more ? `${text.slice(0, 220).trim()}… ` : `${text} `}
+      {long && (
+        <button type="button" className="font-medium text-ink underline" onClick={() => setMore((v) => !v)}>
+          {more ? 'less' : 'more'}
+        </button>
+      )}
+    </p>
+  );
+}
+
 function ElectricalView({ d, r }: { d: ReturnType<typeof shape>; r: AiReport }) {
   const { showToast } = useToast();
   const [floorIdx, setFloorIdx] = useState(0);
@@ -250,7 +265,7 @@ function ElectricalView({ d, r }: { d: ReturnType<typeof shape>; r: AiReport }) 
 
   return (
     <div className="space-y-4">
-      {r.scope && <p className="text-sm text-ink">{r.scope}</p>}
+      {r.scope && <Scope text={r.scope} />}
 
       {d.floors.length > 0 && (
         <>

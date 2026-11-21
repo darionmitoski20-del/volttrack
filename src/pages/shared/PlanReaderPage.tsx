@@ -20,7 +20,7 @@ import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanDiffRow } from '@/lib/database.types';
 import { PlanViewer } from '@/features/planreader/PlanViewer';
 import { AiTab } from '@/features/planreader/AiTab';
-import { AiReportPanel } from '@/features/planreader/AiReport';
+import { AiReportPanel, useReportRow } from '@/features/planreader/AiReport';
 import { openPdf, startAiReport } from '@/features/planreader/ai';
 import { uploadPlan } from '@/features/planreader/service';
 import { CLASSES, UNCERTAIN } from '@/features/planreader/engine';
@@ -98,10 +98,7 @@ export function PlanReaderPage() {
                 timezone={timezone}
               />
             ) : tab === 'overview' ? (
-              <div className="space-y-4">
-                <AiReportPanel jobSiteId={id} versionId={p.version.id} isOwner={isOwner} />
-                <OverviewTab plan={p} work={work.data ?? new Map()} />
-              </div>
+              <OverviewWithAi jobSiteId={id} plan={p} work={work.data ?? new Map()} isOwner={isOwner} />
             ) : tab === 'rooms' ? (
               <RoomsTab plan={p} work={work.data ?? new Map()} />
             ) : tab === 'daily' ? (
@@ -220,6 +217,29 @@ function useGrouped(plan: PlanData) {
     const withMeta = plan.items.filter((i) => i.cls !== 'UNKNOWN').map((i) => ({ ...i, disc: disc.get(i.sheet)?.discipline ?? '', floor: disc.get(i.sheet)?.floor ?? '' }));
     return { floors, items: withMeta };
   }, [plan]);
+}
+
+function OverviewWithAi({ jobSiteId, plan, work, isOwner }: { jobSiteId: string; plan: PlanData; work: Map<string, WorkState>; isOwner: boolean }) {
+  const report = useReportRow(jobSiteId, plan.version.id);
+  const hasReport = report.data?.status === 'done';
+  return (
+    <div className="space-y-4">
+      <AiReportPanel jobSiteId={jobSiteId} versionId={plan.version.id} isOwner={isOwner} />
+      {hasReport ? (
+        <details className="group rounded-xl border border-navy-100 bg-white">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
+            <span className="font-semibold text-ink">Work progress (devices marked on the plan)</span>
+            <span className="text-sm text-ink-muted">open</span>
+          </summary>
+          <div className="border-t border-navy-100 p-3">
+            <OverviewTab plan={plan} work={work} />
+          </div>
+        </details>
+      ) : (
+        <OverviewTab plan={plan} work={work} />
+      )}
+    </div>
+  );
 }
 
 function OverviewTab({ plan, work }: { plan: PlanData; work: Map<string, WorkState> }) {
