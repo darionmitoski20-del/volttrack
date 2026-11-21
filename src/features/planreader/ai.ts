@@ -217,7 +217,7 @@ export async function classifyPages(doc: any, onProgress?: (p: number) => void):
 }
 
 /** Copies the chosen pages of the original PDF into a smaller PDF for the AI. */
-async function subsetPdf(bytes: ArrayBuffer, pages: number[]): Promise<Uint8Array> {
+async function subsetPdf(bytes: ArrayBuffer, pages: number[]): Promise<Uint8Array<ArrayBuffer>> {
   const lib: any = await import(/* @vite-ignore */ PDFLIB_URL);
   const src = await lib.PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
   const dst = await lib.PDFDocument.create();
