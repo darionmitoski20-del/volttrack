@@ -41,36 +41,40 @@ const DAILY = Number(Deno.env.get('PLAN_AI_DAILY') ?? '20');
 const DAILY_Q = 60;
 const MAX_PDF = 32 * 1024 * 1024;
 
-const REPORT_PROMPT = `You are a senior US electrical estimator. The attached file (or text) is ONE construction drawing set.
-Read EVERY sheet of every discipline. Return ONLY a JSON object, in English, with exactly this shape
-(use [] or null when something is not in the set; never invent data; prefix uncertain counts' notes with "~"):
+const REPORT_PROMPT = `You are a senior US electrical estimator working for an ELECTRICAL contractor. The attached file
+(or text) is ONE construction drawing set. Read EVERY sheet. Electrical work is the priority and must be complete and exact;
+other trades (mechanical, plumbing, etc.) are listed separately. Return ONLY a JSON object, in English, with exactly this shape
+(use [] or null when something is not in the set; never invent data; prefix uncertain item names with "~"):
 
 {
   "project": { "name": "", "address": "", "owner": "", "architect": "", "engineer": "", "issue_date": "" },
-  "scope": "3-5 sentences: what work this set covers",
+  "scope": "2-3 short sentences: the electrical work",
   "sheets": [ { "number": "E.2.0", "title": "", "discipline": "Electrical" } ],
-  "disciplines": [ { "name": "Electrical | Mechanical | Plumbing | Fire Alarm | Low Voltage | Architectural | ...",
-                     "summary": "2-3 sentences", "items": [ "key work items / equipment for this discipline" ] } ],
-  "floors": [ { "name": "First floor",
-                "totals": [ { "category": "Lighting | Switches & controls | Receptacles | Data & low voltage | Fire alarm | Equipment & connections | Other",
-                              "item": "e.g. Duplex receptacle 20A TR", "count": 10 } ],
-                "rooms": [ { "room": "117 BOE Office", "items": [ { "item": "", "count": 1 } ] } ] } ],
-  "lighting": [ { "type": "A", "description": "", "manufacturer": "", "catalog": "", "watts": "", "mounting": "", "count": 0, "emergency_count": 0 } ],
-  "panels": [ { "name": "", "status": "new | existing | modified", "voltage": "", "main": "", "location": "", "fed_from": "", "feeder": "",
-                "circuits": [ { "ckt": "", "description": "", "breaker": "", "wire": "" } ] } ],
-  "fire_alarm": { "summary": "", "devices": [ { "item": "", "count": 0 } ], "notes": [ "" ] },
-  "materials": [ { "category": "Boxes | Plates | Devices | Fixtures | Wire | Conduit | Fittings | Breakers & panels | Supports | Other",
-                   "item": "", "quantity": 0, "unit": "ea | ft | box", "basis": "how it was estimated" } ],
-  "demolition": [ "" ],
-  "risks": [ "risks and things that cost money or need field verification" ],
-  "rfi": [ "ready-to-send questions for the architect / engineer" ],
-  "changes": [ "" ]
+  "electrical": {
+    "floors": [ { "name": "First floor",
+                  "totals": [ { "category": "Lighting | Switches & controls | Receptacles | Data & low voltage | Equipment & connections | Other",
+                                "item": "short name, e.g. Duplex receptacle 20A TR", "count": 10 } ],
+                  "rooms": [ { "room": "117 BOE Office", "items": [ { "item": "", "count": 1 } ] } ] } ],
+    "lighting": [ { "type": "A", "description": "short", "manufacturer": "", "catalog": "", "watts": "", "mounting": "", "count": 0, "emergency_count": 0 } ],
+    "panels": [ { "name": "", "status": "new | existing | modified", "voltage": "", "main": "", "location": "", "fed_from": "", "feeder": "",
+                  "circuits": [ { "ckt": "", "description": "", "breaker": "", "wire": "" } ] } ],
+    "materials": [ { "category": "Boxes | Plates | Devices | Fixtures | Wire | Conduit | Fittings | Breakers & panels | Supports | Other",
+                     "item": "", "quantity": 0, "unit": "ea | ft", "basis": "short" } ],
+    "demolition": [ "short" ]
+  },
+  "fire_alarm": { "summary": "", "floors": [ { "name": "", "devices": [ { "item": "", "count": 0 } ] } ], "notes": [ "short" ] },
+  "other_trades": [ { "name": "Mechanical | Plumbing | Architectural | ...", "summary": "1-2 sentences",
+                      "equipment": [ { "tag": "AC-1", "description": "", "location": "", "power": "what the electrician must provide, e.g. 30AS/15AT/2P disconnect, RLP-30,32; or 'not shown on E sheets'" } ],
+                      "notes": [ "short" ] } ],
+  "risks": [ "short" ],
+  "rfi": [ "ready-to-send question" ],
+  "changes": [ "short" ]
 }
 
-Counting rules: count only NEW work shown on floor plans (not legends, schedules, existing-to-remain or demolition).
-Count every floor separately and every room on it. The materials list is a purchasing take-off: boxes, plates,
-devices, fixtures, wire by size (estimate lengths from the drawings' scale), conduit by size, fittings, breakers,
-supports. Panels: list every circuit shown in panel schedules or on the plans.`;
+Rules: count only NEW electrical work shown on floor plans (not legends, schedules, existing-to-remain or demolition).
+Count every floor separately and every room on it. Low voltage / data belongs to electrical. Mechanical and plumbing
+equipment that needs power is listed under other_trades with what the electrician must provide; flag equipment on M/P sheets
+that has no electrical connection on the E sheets. Keep texts short. Panels: every circuit in the schedules.`;
 
 const IMAGE_PROMPT = `These images are tiles (left-to-right, top-to-bottom) of ONE sheet from a US electrical
 construction drawing set. Read every legend, schedule and note on it and return ONLY a JSON object,

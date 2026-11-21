@@ -1,13 +1,13 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, RefreshCw, Send, Copy, AlertTriangle, Loader2 } from 'lucide-react';
+import { Sparkles, RefreshCw, Send, Copy, Loader2, ChevronDown, Lightbulb, ToggleLeft, Plug, Wifi, Cog, Zap } from 'lucide-react';
 import { supabase, errorMessage } from '@/lib/supabase';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Select, Textarea } from '@/components/ui/form';
+import { Textarea } from '@/components/ui/form';
 import { useToast } from '@/components/ui/Toast';
-import { askAi, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport } from './ai';
+import { askAi, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport, type AiTrade } from './ai';
 
 interface ReportRow { status: string; error: string | null; result: AiReport; updated_at: string }
 interface QuestionRow { id: string; question: string; answer: string | null; status: string; created_at: string; user: { full_name: string } | null }
@@ -121,244 +121,286 @@ export function AiReportPanel({ jobSiteId, versionId, isOwner }: { jobSiteId: st
 
 // -- report ---------------------------------------------------------------------------
 
-const CATEGORY_ORDER = ['Lighting', 'Switches & controls', 'Receptacles', 'Data & low voltage', 'Fire alarm', 'Equipment & connections', 'Other'];
-
-function List({ items }: { items?: string[] }) {
-  if (!items?.length) return null;
-  return (
-    <ul className="list-disc space-y-1 pl-5 text-sm text-ink">
-      {items.map((t, i) => <li key={i}>{t}</li>)}
-    </ul>
-  );
-}
-
-function Block({ title, children, tone }: { title: string; children: React.ReactNode; tone?: 'amber' }) {
-  return (
-    <Card className={tone === 'amber' ? 'border-amber-300 bg-amber-50/40' : undefined}>
-      <CardBody className="space-y-3">
-        <h3 className="text-base font-semibold text-ink">{title}</h3>
-        {children}
-      </CardBody>
-    </Card>
-  );
-}
+const TILES: { key: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { key: 'Lighting', label: 'Lights', icon: Lightbulb },
+  { key: 'Switches & controls', label: 'Switches & controls', icon: ToggleLeft },
+  { key: 'Receptacles', label: 'Receptacles', icon: Plug },
+  { key: 'Data & low voltage', label: 'Data & low voltage', icon: Wifi },
+  { key: 'Equipment & connections', label: 'Equipment', icon: Cog },
+];
 
 function sum(items?: AiCount[]) {
   return (items ?? []).reduce((a, b) => a + (typeof b.count === 'number' ? b.count : 0), 0);
 }
 
+function clean(name?: string) {
+  return (name ?? '').replace(/^~\s*/, '');
+}
+
+/** Normalises old and new report shapes. */
+function shape(r: AiReport) {
+  const el = r.electrical ?? {};
+  const floors = el.floors ?? r.floors ?? [];
+  const isOther = (n?: string) => !!n && !/electric|fire|low.?volt|data|telecom/i.test(n);
+  const trades = r.other_trades ?? (r.disciplines ?? []).filter((d) => isOther(d.name));
+  const fa = r.fire_alarm;
+  const faFloors = fa?.floors ?? (fa?.devices?.length ? [{ name: 'All floors', devices: fa.devices }] : []);
+  return {
+    floors: floors.map((f) => ({ ...f, totals: (f.totals ?? []).filter((t) => t.category !== 'Fire alarm') })),
+    lighting: el.lighting ?? r.lighting ?? [],
+    panels: el.panels ?? r.panels ?? [],
+    materials: el.materials ?? r.materials ?? [],
+    demolition: el.demolition ?? r.demolition ?? [],
+    fa,
+    faFloors,
+    trades,
+  };
+}
+
+function Section({ title, count, children, defaultOpen }: { title: string; count?: number; children: React.ReactNode; defaultOpen?: boolean }) {
+  return (
+    <details className="group rounded-xl border border-navy-100 bg-white" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
+        <span className="font-semibold text-ink">{title}</span>
+        <span className="flex items-center gap-2 text-sm text-ink-muted">
+          {count !== undefined && <span className="tabular-nums">{count}</span>}
+          <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+        </span>
+      </summary>
+      <div className="border-t border-navy-100 px-4 py-3">{children}</div>
+    </details>
+  );
+}
+
+function Pills<T extends string>({ value, options, onChange }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onChange(o.id)}
+          className={`rounded-full px-3.5 py-1.5 text-sm font-medium ${value === o.id ? 'bg-navy-900 text-white' : 'bg-navy-50 text-ink-muted hover:bg-navy-100'}`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ReportView({ r, isOwner, onRerun, rerunning }: { r: AiReport; isOwner: boolean; onRerun: () => void; rerunning: boolean }) {
+  const d = useMemo(() => shape(r), [r]);
+  const project = typeof r.project === 'string' ? { name: r.project } : r.project ?? {};
+  const tabs = [
+    { id: 'Electrical', label: 'Electrical' },
+    ...(d.fa && (d.faFloors.length || d.fa.summary) ? [{ id: 'Fire Alarm', label: 'Fire Alarm' }] : []),
+    ...d.trades.map((t) => ({ id: t.name || 'Other', label: t.name || 'Other' })),
+  ];
+  const [tab, setTab] = useState('Electrical');
+  const trade = d.trades.find((t) => (t.name || 'Other') === tab);
+
+  return (
+    <Card className="border-volt-300">
+      <CardBody className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 shrink-0 text-volt-600" />
+              <h2 className="truncate text-lg font-semibold text-ink">{project.name || 'Plan report'}</h2>
+            </div>
+            <p className="mt-0.5 text-sm text-ink-muted">{[project.address, project.issue_date].filter(Boolean).join(' · ')}</p>
+          </div>
+          {isOwner && <Button size="sm" variant="ghost" icon={<RefreshCw className="h-4 w-4" />} loading={rerunning} onClick={onRerun}>Read again</Button>}
+        </div>
+
+        {(r.changes?.length ?? 0) > 0 && (
+          <div className="rounded-xl bg-amber-50 px-4 py-3">
+            <p className="mb-1 text-sm font-semibold text-amber-900">Changed in this version</p>
+            <ul className="list-disc space-y-0.5 pl-5 text-sm text-amber-900">{r.changes!.map((c, i) => <li key={i}>{c}</li>)}</ul>
+          </div>
+        )}
+
+        {tabs.length > 1 && <Pills value={tab} options={tabs} onChange={setTab} />}
+
+        {tab === 'Electrical' && <ElectricalView d={d} r={r} />}
+        {tab === 'Fire Alarm' && d.fa && <FireAlarmView fa={d.fa} floors={d.faFloors} />}
+        {trade && <TradeView t={trade} />}
+
+        <p className="text-xs text-ink-subtle">Read by AI{r.model ? ` (${r.model})` : ''}. Numbers marked ~ are uncertain — check the drawings before ordering.</p>
+      </CardBody>
+    </Card>
+  );
+}
+
+function ElectricalView({ d, r }: { d: ReturnType<typeof shape>; r: AiReport }) {
   const { showToast } = useToast();
-  const floors = r.floors ?? [];
   const [floorIdx, setFloorIdx] = useState(0);
-  const floor = floors[Math.min(floorIdx, Math.max(0, floors.length - 1))];
-  const byCategory = useMemo(() => {
+  const [open, setOpen] = useState<string | null>(null);
+  const floor = d.floors[Math.min(floorIdx, Math.max(0, d.floors.length - 1))];
+  const byCat = useMemo(() => {
     const m = new Map<string, AiCount[]>();
     for (const t of floor?.totals ?? []) {
-      const k = t.category || 'Other';
+      const k = TILES.some((x) => x.key === t.category) ? (t.category as string) : 'Equipment & connections';
       m.set(k, [...(m.get(k) ?? []), t]);
     }
-    return [...m.entries()].sort((a, b) => {
-      const ia = CATEGORY_ORDER.indexOf(a[0]), ib = CATEGORY_ORDER.indexOf(b[0]);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
+    return m;
   }, [floor]);
-  const project = typeof r.project === 'string' ? { name: r.project } : r.project ?? {};
-  const materialsByCat = useMemo(() => {
-    const m = new Map<string, NonNullable<AiReport['materials']>>();
-    for (const x of r.materials ?? []) m.set(x.category || 'Other', [...(m.get(x.category || 'Other') ?? []), x]);
-    return [...m.entries()];
-  }, [r.materials]);
+  const openItems = open ? byCat.get(open) ?? [] : [];
 
   return (
     <div className="space-y-4">
-      <Card className="border-volt-300">
-        <CardBody className="space-y-2">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-volt-600" />
-              <h2 className="text-lg font-semibold text-ink">{project.name || 'Plan report'}</h2>
-            </div>
-            {isOwner && (
-              <Button size="sm" variant="ghost" icon={<RefreshCw className="h-4 w-4" />} loading={rerunning} onClick={onRerun}>Read again</Button>
-            )}
-          </div>
-          <p className="text-sm text-ink-muted">
-            {[project.address, project.owner, project.architect && `Architect: ${project.architect}`, project.engineer && `Engineer: ${project.engineer}`, project.issue_date]
-              .filter(Boolean).join(' · ')}
-          </p>
-          {r.scope && <p className="text-sm text-ink">{r.scope}</p>}
-          <p className="text-xs text-ink-subtle">Read by AI{r.model ? ` (${r.model})` : ''} — check quantities on the drawings before ordering.</p>
-        </CardBody>
-      </Card>
+      {r.scope && <p className="text-sm text-ink">{r.scope}</p>}
 
-      {(r.changes?.length ?? 0) > 0 && (
-        <Block title="Changes from the previous version" tone="amber"><List items={r.changes} /></Block>
-      )}
-
-      {floors.length > 0 && (
-        <Block title="Devices by floor">
-          {floors.length > 1 && (
-            <Select aria-label="Floor" value={String(floorIdx)} onChange={(e) => setFloorIdx(Number(e.target.value))} className="max-w-xs">
-              {floors.map((f, i) => <option key={i} value={i}>{f.name || `Floor ${i + 1}`} — {sum(f.totals)} items</option>)}
-            </Select>
+      {d.floors.length > 0 && (
+        <>
+          {d.floors.length > 1 && (
+            <Pills
+              value={String(floorIdx)}
+              options={d.floors.map((f, i) => ({ id: String(i), label: f.name || `Floor ${i + 1}` }))}
+              onChange={(v) => { setFloorIdx(Number(v)); setOpen(null); }}
+            />
           )}
-          {floors.length === 1 && <p className="text-sm font-medium text-ink">{floor?.name}</p>}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {byCategory.map(([cat, items]) => (
-              <div key={cat} className="rounded-xl border border-navy-100 bg-white p-3">
-                <div className="mb-1 flex items-baseline justify-between">
-                  <p className="text-sm font-semibold text-ink">{cat}</p>
-                  <p className="text-lg font-bold tabular-nums text-ink">{sum(items)}</p>
-                </div>
-                {items.map((t, i) => (
-                  <div key={i} className="flex justify-between gap-2 text-sm">
-                    <span className="text-ink-muted">{t.item}</span>
-                    <span className="tabular-nums text-ink">{t.count ?? '—'}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {TILES.map((t) => {
+              const n = sum(byCat.get(t.key));
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  disabled={n === 0}
+                  onClick={() => setOpen(open === t.key ? null : t.key)}
+                  className={`rounded-xl border p-3 text-left transition-colors disabled:opacity-40 ${open === t.key ? 'border-navy-900 bg-navy-900 text-white' : 'border-navy-100 bg-white hover:border-navy-300'}`}
+                >
+                  <Icon className="h-5 w-5 opacity-70" />
+                  <p className="mt-1 text-2xl font-bold tabular-nums">{n}</p>
+                  <p className={`text-xs ${open === t.key ? 'text-white/80' : 'text-ink-muted'}`}>{t.label}</p>
+                </button>
+              );
+            })}
           </div>
+          {open && (
+            <div className="rounded-xl bg-navy-50/60 px-4 py-2">
+              {openItems.map((it, i) => (
+                <div key={i} className="flex justify-between gap-3 border-b border-navy-100 py-1.5 text-sm last:border-0">
+                  <span className="text-ink">{clean(it.item)}{it.item?.startsWith('~') && <span className="ml-1 text-amber-600">~</span>}</span>
+                  <span className="font-semibold tabular-nums">{it.count ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {(floor?.rooms?.length ?? 0) > 0 && (
-            <div>
-              <p className="mb-1 text-sm font-semibold text-ink">Rooms</p>
-              <div className="divide-y divide-navy-100 rounded-xl border border-navy-100">
+            <Section title={`Rooms — ${floor?.name ?? ''}`} count={floor!.rooms!.length}>
+              <div className="divide-y divide-navy-100">
                 {floor!.rooms!.map((room, i) => (
-                  <details key={i} className="px-3 py-2 text-sm">
-                    <summary className="flex cursor-pointer justify-between gap-2">
+                  <details key={i} className="py-2 text-sm">
+                    <summary className="flex cursor-pointer list-none justify-between gap-2">
                       <span className="font-medium text-ink">{room.room}</span>
-                      <span className="tabular-nums text-ink-muted">{sum(room.items)} items</span>
+                      <span className="tabular-nums text-ink-muted">{sum(room.items)}</span>
                     </summary>
-                    <div className="mt-1 space-y-0.5 pl-4">
+                    <div className="mt-1 space-y-0.5 pl-3">
                       {(room.items ?? []).map((it, j) => (
-                        <div key={j} className="flex justify-between gap-2"><span className="text-ink-muted">{it.item}</span><span className="tabular-nums">{it.count ?? '—'}</span></div>
+                        <div key={j} className="flex justify-between gap-2"><span className="text-ink-muted">{clean(it.item)}</span><span className="tabular-nums">{it.count ?? '—'}</span></div>
                       ))}
                     </div>
                   </details>
                 ))}
               </div>
-            </div>
+            </Section>
           )}
-        </Block>
+        </>
       )}
 
-      {(r.disciplines?.length ?? 0) > 0 && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {r.disciplines!.map((d, i) => (
-            <Block key={i} title={d.name || 'Discipline'}>
-              {d.summary && <p className="text-sm text-ink-muted">{d.summary}</p>}
-              <List items={d.items} />
-            </Block>
-          ))}
-        </div>
-      )}
-
-      {(r.lighting?.length ?? 0) > 0 && (
-        <Block title="Light fixtures">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase text-ink-muted">
-                <tr><th className="py-1 pr-3">Type</th><th className="pr-3">Description</th><th className="pr-3">Manufacturer / catalog</th><th className="pr-3">W</th><th className="pr-3">Mounting</th><th className="pr-3 text-right">Count</th><th className="text-right">EM</th></tr>
-              </thead>
-              <tbody>
-                {r.lighting!.map((f, i) => (
-                  <tr key={i} className="border-t border-navy-100 align-top">
-                    <td className="py-1.5 pr-3 font-semibold">{f.type}</td>
-                    <td className="pr-3">{f.description}</td>
-                    <td className="pr-3">{[f.manufacturer, f.catalog].filter(Boolean).join(' · ')}</td>
-                    <td className="pr-3">{f.watts}</td>
-                    <td className="pr-3">{f.mounting}</td>
-                    <td className="pr-3 text-right tabular-nums">{f.count ?? '—'}</td>
-                    <td className="text-right tabular-nums">{f.emergency_count || ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Block>
-      )}
-
-      {(r.panels?.length ?? 0) > 0 && (
-        <Block title="Panels and circuits">
-          {r.panels!.map((p, i) => (
-            <details key={i} className="rounded-xl border border-navy-100 px-3 py-2 text-sm" open={i === 0}>
-              <summary className="cursor-pointer">
-                <b>{p.name}</b>{p.status ? <span className="ml-2 rounded bg-navy-50 px-1.5 py-0.5 text-xs">{p.status}</span> : null}
-                <span className="ml-2 text-ink-muted">{[p.voltage, p.main, p.location, p.fed_from && `fed from ${p.fed_from}`, p.feeder].filter(Boolean).join(' · ')}</span>
-                <span className="ml-2 text-ink-subtle">· {p.circuits?.length ?? 0} circuits</span>
-              </summary>
-              {(p.circuits?.length ?? 0) > 0 && (
-                <table className="mt-2 w-full text-xs">
-                  <thead className="text-ink-muted"><tr><th className="py-0.5 text-left">Ckt</th><th className="text-left">Load</th><th className="text-left">Breaker</th><th className="text-left">Wire</th></tr></thead>
-                  <tbody>
-                    {p.circuits!.map((c, j) => (
-                      <tr key={j} className="border-t border-navy-50"><td className="w-12 py-0.5 font-medium">{c.ckt}</td><td>{c.description}</td><td className="w-20">{c.breaker}</td><td className="w-28">{c.wire}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </details>
-          ))}
-        </Block>
-      )}
-
-      {r.fire_alarm && (r.fire_alarm.summary || (r.fire_alarm.devices?.length ?? 0) > 0) && (
-        <Block title="Fire alarm">
-          {r.fire_alarm.summary && <p className="text-sm text-ink-muted">{r.fire_alarm.summary}</p>}
-          <div className="grid gap-x-6 text-sm sm:grid-cols-2">
-            {(r.fire_alarm.devices ?? []).map((d, i) => (
-              <div key={i} className="flex justify-between gap-2 border-b border-navy-50 py-1"><span>{d.item}</span><span className="font-semibold tabular-nums">{d.count ?? '—'}</span></div>
+      {d.lighting.length > 0 && (
+        <Section title="Light fixtures" count={d.lighting.reduce((a, f) => a + (f.count ?? 0), 0)}>
+          <div className="divide-y divide-navy-100">
+            {d.lighting.map((f, i) => (
+              <div key={i} className="flex items-start justify-between gap-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="text-ink"><b className="mr-1.5">{f.type}</b>{f.description}</p>
+                  <p className="text-xs text-ink-muted">{[f.manufacturer, f.catalog, f.watts && `${f.watts} W`, f.mounting].filter(Boolean).join(' · ')}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-semibold tabular-nums">{f.count ?? '—'}</p>
+                  {!!f.emergency_count && <p className="text-xs text-ink-muted">{f.emergency_count} EM</p>}
+                </div>
+              </div>
             ))}
           </div>
-          <List items={r.fire_alarm.notes} />
-        </Block>
+        </Section>
       )}
 
-      {materialsByCat.length > 0 && (
-        <Block title="Materials (take-off)">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase text-ink-muted"><tr><th className="py-1 pr-3">Item</th><th className="pr-3 text-right">Qty</th><th className="pr-3">Unit</th><th>Basis</th></tr></thead>
-              <tbody>
-                {materialsByCat.map(([cat, items]) => (
-                  <Fragment key={cat}>
-                    <tr><td colSpan={4} className="pt-3 text-xs font-semibold uppercase tracking-wide text-ink-subtle">{cat}</td></tr>
-                    {items.map((m, i) => (
-                      <tr key={`${cat}-${i}`} className="border-t border-navy-100 align-top">
-                        <td className="py-1.5 pr-3">{m.item}</td>
-                        <td className="pr-3 text-right tabular-nums">{m.quantity ?? '—'}</td>
-                        <td className="pr-3">{m.unit}</td>
-                        <td className="text-xs text-ink-muted">{m.basis}</td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+      {d.panels.length > 0 && (
+        <Section title="Panels and circuits" count={d.panels.length}>
+          <div className="space-y-2">
+            {d.panels.map((p, i) => (
+              <details key={i} className="rounded-lg border border-navy-100 px-3 py-2 text-sm">
+                <summary className="cursor-pointer list-none">
+                  <b>{p.name}</b>
+                  {p.status && <span className="ml-2 rounded bg-navy-50 px-1.5 py-0.5 text-xs">{p.status}</span>}
+                  <span className="block text-xs text-ink-muted">{[p.voltage, p.main, p.location, p.feeder].filter(Boolean).join(' · ')}</span>
+                </summary>
+                {(p.circuits?.length ?? 0) > 0 && (
+                  <table className="mt-2 w-full text-xs">
+                    <tbody>
+                      {p.circuits!.map((c, j) => (
+                        <tr key={j} className="border-t border-navy-50 align-top">
+                          <td className="w-14 py-1 font-medium">{c.ckt}</td>
+                          <td className="py-1">{c.description}</td>
+                          <td className="w-20 py-1 text-right">{c.breaker}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </details>
+            ))}
           </div>
-        </Block>
+        </Section>
       )}
 
-      {(r.demolition?.length ?? 0) > 0 && <Block title="Demolition"><List items={r.demolition} /></Block>}
+      {d.materials.length > 0 && (
+        <Section title="Materials to order" count={d.materials.length}>
+          <div className="divide-y divide-navy-100">
+            {d.materials.map((m, i) => (
+              <div key={i} className="flex justify-between gap-3 py-1.5 text-sm">
+                <span className="min-w-0">
+                  <span className="text-ink">{clean(m.item)}</span>
+                  <span className="block text-xs text-ink-subtle">{m.category}</span>
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums">{m.quantity ?? '—'} {m.unit}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {d.demolition.length > 0 && (
+        <Section title="Demolition" count={d.demolition.length}>
+          <ul className="list-disc space-y-1 pl-5 text-sm">{d.demolition.map((x, i) => <li key={i}>{x}</li>)}</ul>
+        </Section>
+      )}
 
       {(r.risks?.length ?? 0) > 0 && (
-        <Block title="Risks — watch out">
-          <div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /><List items={r.risks} /></div>
-        </Block>
+        <Section title="Watch out" count={r.risks!.length}>
+          <ul className="list-disc space-y-1 pl-5 text-sm">{r.risks!.map((x, i) => <li key={i}>{clean(x)}</li>)}</ul>
+        </Section>
       )}
 
       {(r.rfi?.length ?? 0) > 0 && (
-        <Block title="RFI questions for the architect / engineer">
-          <ol className="list-decimal space-y-1 pl-5 text-sm text-ink">{r.rfi!.map((q, i) => <li key={i}>{q}</li>)}</ol>
+        <Section title="Questions for the architect (RFI)" count={r.rfi!.length}>
+          <ol className="list-decimal space-y-1 pl-5 text-sm">{r.rfi!.map((q, i) => <li key={i}>{q}</li>)}</ol>
           <Button
+            className="mt-3"
             size="sm"
             variant="secondary"
             icon={<Copy className="h-4 w-4" />}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(r.rfi!.map((q, i) => `${i + 1}. ${q}`).join('\n'));
-                showToast('Copied', 'Paste the RFI questions into an email');
+                showToast('Copied', 'Paste the questions into an email');
               } catch {
                 showToast('Could not copy', 'Select the text and copy it by hand');
               }
@@ -366,21 +408,84 @@ function ReportView({ r, isOwner, onRerun, rerunning }: { r: AiReport; isOwner: 
           >
             Copy all
           </Button>
-        </Block>
+        </Section>
       )}
 
       {(r.sheets?.length ?? 0) > 0 && (
-        <Block title="Sheets">
-          <div className="grid gap-x-6 text-sm sm:grid-cols-2">
-            {r.sheets!.map((s, i) => <p key={i}><b className="mr-1.5">{s.number}</b>{s.title}{s.discipline ? <span className="text-ink-subtle"> · {s.discipline}</span> : null}</p>)}
+        <Section title="Sheets in this set" count={r.sheets!.length}>
+          <div className="space-y-0.5 text-sm">
+            {r.sheets!.map((s, i) => <p key={i}><b className="mr-1.5">{s.number}</b>{s.title}</p>)}
           </div>
-        </Block>
+        </Section>
       )}
     </div>
   );
 }
 
+function FireAlarmView({ fa, floors }: { fa: NonNullable<AiReport['fire_alarm']>; floors: { name?: string; devices?: AiCount[] }[] }) {
+  const [idx, setIdx] = useState(0);
+  const f = floors[Math.min(idx, Math.max(0, floors.length - 1))];
+  return (
+    <div className="space-y-4">
+      {fa.summary && <p className="text-sm text-ink">{fa.summary}</p>}
+      {floors.length > 1 && (
+        <Pills value={String(idx)} options={floors.map((x, i) => ({ id: String(i), label: x.name || `Floor ${i + 1}` }))} onChange={(v) => setIdx(Number(v))} />
+      )}
+      {f && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {(f.devices ?? []).map((dv, i) => (
+            <div key={i} className="rounded-xl border border-navy-100 bg-white p-3">
+              <p className="text-2xl font-bold tabular-nums">{dv.count ?? '—'}</p>
+              <p className="text-xs text-ink-muted">{clean(dv.item)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {(fa.notes?.length ?? 0) > 0 && (
+        <Section title="Notes" count={fa.notes!.length}>
+          <ul className="list-disc space-y-1 pl-5 text-sm">{fa.notes!.map((x, i) => <li key={i}>{x}</li>)}</ul>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function TradeView({ t }: { t: AiTrade }) {
+  return (
+    <div className="space-y-4">
+      {t.summary && <p className="text-sm text-ink">{t.summary}</p>}
+      {(t.equipment?.length ?? 0) > 0 && (
+        <div className="divide-y divide-navy-100 rounded-xl border border-navy-100 bg-white">
+          {t.equipment!.map((e, i) => (
+            <div key={i} className="px-4 py-2.5 text-sm">
+              <p className="text-ink"><b className="mr-1.5">{e.tag}</b>{e.description}{e.location ? <span className="text-ink-muted"> · {e.location}</span> : null}</p>
+              {e.power && (
+                <p className={`mt-0.5 text-xs ${/not shown|no electrical|missing/i.test(e.power) ? 'font-semibold text-red-600' : 'text-ink-muted'}`}>
+                  <Zap className="mr-1 inline h-3 w-3" />{e.power}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {(t.items?.length ?? 0) > 0 && <ul className="list-disc space-y-1 pl-5 text-sm">{t.items!.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+      {(t.notes?.length ?? 0) > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-ink-muted">{t.notes!.map((x, i) => <li key={i}>{x}</li>)}</ul>}
+    </div>
+  );
+}
+
 // -- questions ------------------------------------------------------------------------
+
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardBody className="space-y-3">
+        <h3 className="text-base font-semibold text-ink">{title}</h3>
+        {children}
+      </CardBody>
+    </Card>
+  );
+}
 
 function Questions({ jobSiteId, versionId }: { jobSiteId: string; versionId: string }) {
   const { companyId } = useCompanyContext();

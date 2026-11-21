@@ -133,21 +133,35 @@ export async function readPagesWithAi(opts: {
 // ---- Whole-plan report (background AI job) ------------------------------------------
 
 export interface AiCount { item?: string; count?: number | null; category?: string }
+export interface AiFloor { name?: string; totals?: AiCount[]; rooms?: { room?: string; items?: AiCount[] }[] }
+export interface AiLight { type?: string; description?: string; manufacturer?: string; catalog?: string; watts?: string; mounting?: string; count?: number | null; emergency_count?: number | null }
+export interface AiPanelFull { name?: string; status?: string; voltage?: string; main?: string; location?: string; fed_from?: string; feeder?: string; circuits?: { ckt?: string; description?: string; breaker?: string; wire?: string }[] }
+export interface AiMaterial { category?: string; item?: string; quantity?: number | string | null; unit?: string; basis?: string }
+export interface AiTrade {
+  name?: string;
+  summary?: string;
+  items?: string[];
+  equipment?: { tag?: string; description?: string; location?: string; power?: string }[];
+  notes?: string[];
+}
 export interface AiReport {
   model?: string;
   project?: { name?: string; address?: string; owner?: string; architect?: string; engineer?: string; issue_date?: string } | string;
   scope?: string;
   sheets?: { number?: string; title?: string; discipline?: string }[];
-  disciplines?: { name?: string; summary?: string; items?: string[] }[];
-  floors?: { name?: string; totals?: AiCount[]; rooms?: { room?: string; items?: AiCount[] }[] }[];
-  lighting?: { type?: string; description?: string; manufacturer?: string; catalog?: string; watts?: string; mounting?: string; count?: number | null; emergency_count?: number | null }[];
-  panels?: { name?: string; status?: string; voltage?: string; main?: string; location?: string; fed_from?: string; feeder?: string; circuits?: { ckt?: string; description?: string; breaker?: string; wire?: string }[] }[];
-  fire_alarm?: { summary?: string; devices?: AiCount[]; notes?: string[] };
-  materials?: { category?: string; item?: string; quantity?: number | string | null; unit?: string; basis?: string }[];
-  demolition?: string[];
+  electrical?: { floors?: AiFloor[]; lighting?: AiLight[]; panels?: AiPanelFull[]; materials?: AiMaterial[]; demolition?: string[] };
+  fire_alarm?: { summary?: string; floors?: { name?: string; devices?: AiCount[] }[]; devices?: AiCount[]; notes?: string[] };
+  other_trades?: AiTrade[];
   risks?: string[];
   rfi?: string[];
   changes?: string[];
+  // older report shape (read before the electrical/other_trades split)
+  disciplines?: AiTrade[];
+  floors?: AiFloor[];
+  lighting?: AiLight[];
+  panels?: AiPanelFull[];
+  materials?: AiMaterial[];
+  demolition?: string[];
 }
 
 async function callAi(body: Record<string, unknown>): Promise<any> {
