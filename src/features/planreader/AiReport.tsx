@@ -7,7 +7,7 @@ import { Card, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/form';
 import { useToast } from '@/components/ui/Toast';
-import { askAi, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport, type AiTrade } from './ai';
+import { askAi, openPdf, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport, type AiTrade } from './ai';
 
 interface ReportRow { status: string; error: string | null; result: AiReport; updated_at: string }
 interface QuestionRow { id: string; question: string; answer: string | null; status: string; created_at: string; user: { full_name: string } | null }
@@ -30,12 +30,14 @@ export function useReportRow(jobSiteId: string, versionId: string) {
 }
 
 /** The AI report of a plan version: starts, waits for, and shows it, with questions below. */
-export function AiReportPanel({ jobSiteId, versionId, isOwner }: { jobSiteId: string; versionId: string; isOwner: boolean }) {
+export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { jobSiteId: string; versionId: string; versionN: number; isOwner: boolean }) {
   const { companyId } = useCompanyContext();
   const qc = useQueryClient();
   const { showToast } = useToast();
   const row = useReportRow(jobSiteId, versionId);
   const [starting, setStarting] = useState(false);
+  const [needFile, setNeedFile] = useState(false);
+  const [prog, setProg] = useState('');
   const status = row.data?.status;
 
   // While the AI works in the background, ask the server every 8 s whether it is done.
@@ -62,16 +64,46 @@ export function AiReportPanel({ jobSiteId, versionId, isOwner }: { jobSiteId: st
       await startAiReport({ companyId, versionId });
       void qc.invalidateQueries({ queryKey: ['plan-ai-report', versionId] });
     } catch (e) {
-      showToast('AI could not start', errorMessage(e, 'Try again.'));
+      const msg = errorMessage(e, 'Try again.');
+      // Big plans are not stored: ask for the PDF again.
+      if (/No PDF/i.test(msg)) setNeedFile(true);
+      else showToast('AI could not start', msg);
     } finally {
       setStarting(false);
     }
   };
 
+  const startWithFile = async (file: File | undefined) => {
+    if (!file) return;
+    setStarting(true);
+    try {
+      const doc = await openPdf(file);
+      await startAiReport({ companyId, versionId, jobSiteId, versionN, file, doc, onProgress: (m) => setProg(m) });
+      setNeedFile(false);
+      void qc.invalidateQueries({ queryKey: ['plan-ai-report', versionId] });
+    } catch (e) {
+      showToast('AI could not start', errorMessage(e, 'Try again.'));
+    } finally {
+      setStarting(false);
+      setProg('');
+    }
+  };
+
+  const filePicker = needFile && (
+    <Card className="border-volt-300">
+      <CardBody className="space-y-2">
+        <p className="text-sm text-ink">This plan is too big to keep on the server. Choose the same PDF again so AI can read it:</p>
+        <input type="file" accept="application/pdf" disabled={starting} onChange={(e) => startWithFile(e.target.files?.[0])} className="block w-full text-sm" />
+        {starting && <p className="flex items-center gap-2 text-sm text-ink-muted"><Loader2 className="h-4 w-4 animate-spin" /> {prog || 'Preparing…'}</p>}
+      </CardBody>
+    </Card>
+  );
+
   if (row.isLoading) return null;
 
   if (!row.data) {
     if (!isOwner) return null;
+    if (needFile) return filePicker;
     return (
       <Card>
         <CardBody className="flex flex-wrap items-center justify-between gap-3">
@@ -100,6 +132,7 @@ export function AiReportPanel({ jobSiteId, versionId, isOwner }: { jobSiteId: st
   }
 
   if (status === 'error') {
+    if (needFile) return filePicker;
     return (
       <Card className="border-red-200">
         <CardBody className="flex flex-wrap items-center justify-between gap-3">
@@ -112,6 +145,7 @@ export function AiReportPanel({ jobSiteId, versionId, isOwner }: { jobSiteId: st
 
   return (
     <div className="space-y-4">
+      {filePicker}
       {row.data.error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{row.data.error}</p>}
       <ReportView r={row.data.result} isOwner={isOwner} onRerun={start} rerunning={starting} />
       <Questions jobSiteId={jobSiteId} versionId={versionId} />

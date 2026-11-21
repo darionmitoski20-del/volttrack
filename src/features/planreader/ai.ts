@@ -178,12 +178,134 @@ async function callAi(body: Record<string, unknown>): Promise<any> {
   return data;
 }
 
-/** Starts the AI report for a plan version. The server sends the stored PDF; the text is a fallback for big PDFs. */
-export async function startAiReport(opts: { companyId: string; versionId: string; doc?: any; onProgress?: (m: string, p: number) => void }) {
+const PDFLIB_URL = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm';
+const AI_PDF_MAX = 30 * 1024 * 1024;
+const SHEET_NO = /\b([A-Z]{1,2})[-.]?(\d{1,2})[.-](\d{1,3}[A-Z]?)\b/;
+
+export interface PageClass { page: number; sheet: string; group: 'electrical' | 'mechanical' | 'plumbing' | 'other' }
+
+/** Sorts every page by trade, using the biggest sheet number on the page (the title block). */
+export async function classifyPages(doc: any, onProgress?: (p: number) => void): Promise<PageClass[]> {
+  const out: PageClass[] = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    page.cleanup();
+    let best = '';
+    let bestH = 0;
+    let all = '';
+    for (const it of tc.items as any[]) {
+      const str = String(it.str || '').trim();
+      if (!str) continue;
+      all += ' ' + str.toUpperCase();
+      const m = str.toUpperCase().match(SHEET_NO);
+      if (!m) continue;
+      const t = it.transform || [1, 0, 0, 1];
+      const h = Math.hypot(t[0], t[1]) || it.height || 0;
+      if (h > bestH) { bestH = h; best = m[0]; }
+    }
+    const prefix = (best.match(/^[A-Z]+/)?.[0] ?? '').toUpperCase();
+    let group: PageClass['group'] = 'other';
+    if (/^(E|EL|EP|ES|FA|LV|T|TC|TY)$/.test(prefix)) group = 'electrical';
+    else if (/^(M|MH|H)$/.test(prefix)) group = 'mechanical';
+    else if (/^(P|PL)$/.test(prefix)) group = 'plumbing';
+    else if (!best && /ELECTRICAL|FIRE ALARM|LIGHTING PLAN|POWER PLAN/.test(all)) group = 'electrical';
+    out.push({ page: p, sheet: best, group });
+    onProgress?.(p / doc.numPages);
+  }
+  return out;
+}
+
+/** Copies the chosen pages of the original PDF into a smaller PDF for the AI. */
+async function subsetPdf(bytes: ArrayBuffer, pages: number[]): Promise<Uint8Array> {
+  const lib: any = await import(/* @vite-ignore */ PDFLIB_URL);
+  const src = await lib.PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+  const dst = await lib.PDFDocument.create();
+  const copied = await dst.copyPages(src, pages.map((p) => p - 1));
+  for (const pg of copied) dst.addPage(pg);
+  return dst.save({ useObjectStreams: true });
+}
+
+/**
+ * Builds the file the AI reads: the electrical sheets first, then mechanical and plumbing, as one
+ * smaller PDF (so big sets fit), stored next to the plan. Returns its storage path, or null.
+ */
+async function prepareAiPdf(opts: { file: File; doc: any; companyId: string; jobSiteId: string; versionN: number; onProgress?: (m: string, p: number) => void }) {
+  const classes = await classifyPages(opts.doc, (p) => opts.onProgress?.('Finding the electrical sheets…', p * 0.5));
+  const elec = classes.filter((c) => c.group === 'electrical').map((c) => c.page);
+  const mech = classes.filter((c) => c.group === 'mechanical').map((c) => c.page);
+  const plumb = classes.filter((c) => c.group === 'plumbing').map((c) => c.page);
+  const tries = [
+    [...elec, ...mech, ...plumb],
+    [...elec, ...mech],
+    elec,
+  ].filter((t, i, arr) => t.length > 0 && arr.findIndex((x) => x.length === t.length) === i);
+  if (!tries.length) return { path: null as string | null, classes };
+
+  // A small whole PDF is sent as it is.
+  if (opts.file.size <= AI_PDF_MAX && classes.length <= 90) {
+    return { path: null as string | null, classes, whole: true };
+  }
+  const bytes = await opts.file.arrayBuffer();
+  for (const pages of tries) {
+    opts.onProgress?.(`Preparing ${pages.length} sheets for AI…`, 0.6);
+    try {
+      const out = await subsetPdf(bytes, pages.slice(0, 90));
+      if (out.byteLength > AI_PDF_MAX) continue;
+      const path = `${opts.companyId}/${opts.jobSiteId}/v${opts.versionN}/ai.pdf`;
+      const { error } = await supabase.storage.from('plans').upload(path, new Blob([out], { type: 'application/pdf' }), { upsert: true, contentType: 'application/pdf' });
+      if (error) throw error;
+      return { path, classes };
+    } catch {
+      /* try a smaller set */
+    }
+  }
+  return { path: null as string | null, classes };
+}
+
+/** Text for the AI, electrical sheets first (fallback when no PDF can be sent). */
+async function orderedText(doc: any, classes: PageClass[], onProgress?: (p: number) => void) {
+  const rank = { electrical: 0, mechanical: 1, plumbing: 2, other: 3 } as const;
+  const order = [...classes].sort((a, b) => rank[a.group] - rank[b.group] || a.page - b.page);
+  const parts: string[] = [];
+  let len = 0;
+  for (let i = 0; i < order.length; i++) {
+    const c = order[i]!;
+    if (c.group === 'other') {
+      parts.push(`##### PAGE ${c.page} (${c.sheet || 'no sheet no.'}, not electrical/mechanical/plumbing)`);
+      continue;
+    }
+    const one = await planText({ numPages: 1, getPage: () => doc.getPage(c.page) });
+    const t = one.replace('##### PAGE 1 #####', `##### PAGE ${c.page} — ${c.sheet} (${c.group}) #####`);
+    if (len + t.length > 380000) break;
+    parts.push(t);
+    len += t.length;
+    onProgress?.(i / order.length);
+  }
+  return parts.join('\n');
+}
+
+/** Starts the AI report for a plan version (after an upload, or "Read again" with the file). */
+export async function startAiReport(opts: {
+  companyId: string;
+  versionId: string;
+  jobSiteId?: string;
+  versionN?: number;
+  file?: File;
+  doc?: any;
+  onProgress?: (m: string, p: number) => void;
+}) {
   let text = '';
-  if (opts.doc) text = await planText(opts.doc, (p) => opts.onProgress?.('Preparing the plan for AI…', p));
+  let aiPdfPath: string | null = null;
+  if (opts.doc && opts.file && opts.jobSiteId && opts.versionN) {
+    const prep = await prepareAiPdf({ file: opts.file, doc: opts.doc, companyId: opts.companyId, jobSiteId: opts.jobSiteId, versionN: opts.versionN, onProgress: opts.onProgress });
+    aiPdfPath = prep.path;
+    if (!aiPdfPath && !prep.whole) text = await orderedText(opts.doc, prep.classes, (p) => opts.onProgress?.('Reading the text of the sheets…', 0.7 + p * 0.3));
+  } else if (opts.doc) {
+    text = await planText(opts.doc, (p) => opts.onProgress?.('Preparing the plan for AI…', p));
+  }
   opts.onProgress?.('Sending the plan to AI…', 1);
-  return callAi({ action: 'start', company_id: opts.companyId, version_id: opts.versionId, text });
+  return callAi({ action: 'start', company_id: opts.companyId, version_id: opts.versionId, text, ai_pdf_path: aiPdfPath });
 }
 
 export const pollAiReport = (companyId: string, versionId: string) =>

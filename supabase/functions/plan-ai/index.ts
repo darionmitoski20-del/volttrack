@@ -39,7 +39,7 @@ const OPENAI_MODELS = [Deno.env.get('OPENAI_MODEL'), 'gpt-6-astra', 'gpt-6.1-sol
 const CLAUDE_MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-opus-5-5';
 const DAILY = Number(Deno.env.get('PLAN_AI_DAILY') ?? '20');
 const DAILY_Q = 60;
-const MAX_PDF = 32 * 1024 * 1024;
+const MAX_PDF = 32 * 1024 * 1024; // OpenAI / Claude file limit
 
 const REPORT_PROMPT = `You are a senior US electrical estimator working for an ELECTRICAL contractor. The attached file
 (or text) is ONE construction drawing set. Read EVERY sheet. Electrical work is the priority and must be complete and exact;
@@ -228,10 +228,16 @@ Deno.serve(async (req) => {
         ? `\n\nThis is a REVISION. Report of the previous version (JSON) is below. Fill "changes" with what is added, removed or different:\n${prevReport}`
         : '\n\nThis is the first version: return "changes": [].');
 
+      // Which PDF the AI reads: the electrical subset made at upload (ai.pdf), else the stored original.
       let pdf: Blob | null = null;
-      if (v.pdf_path) {
-        const { data: dl } = await admin.storage.from('plans').download(v.pdf_path);
-        if (dl && dl.size <= MAX_PDF) pdf = dl;
+      const candidates = [
+        typeof body.ai_pdf_path === 'string' && body.ai_pdf_path.startsWith(`${company_id}/`) ? body.ai_pdf_path : null,
+        `${company_id}/${v.job_site_id}/v${v.n}/ai.pdf`,
+        v.pdf_path,
+      ].filter(Boolean) as string[];
+      for (const path of candidates) {
+        const { data: dl } = await admin.storage.from('plans').download(path);
+        if (dl && dl.size <= MAX_PDF) { pdf = dl; break; }
       }
       const planText = typeof text === 'string' ? text.slice(0, 400000) : '';
       if (!pdf && !planText) return json({ error: 'No PDF or text to read' }, 400);

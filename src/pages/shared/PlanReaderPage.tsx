@@ -143,6 +143,9 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
         await startAiReport({
           companyId,
           versionId: v.id,
+          jobSiteId,
+          versionN: v.n,
+          file,
           doc,
           onProgress: (m, p) => setProg({ m, p: Math.round(p * 100) }),
         });
@@ -224,7 +227,7 @@ function OverviewWithAi({ jobSiteId, plan, work, isOwner }: { jobSiteId: string;
   const hasReport = report.data?.status === 'done';
   return (
     <div className="space-y-4">
-      <AiReportPanel jobSiteId={jobSiteId} versionId={plan.version.id} isOwner={isOwner} />
+      <AiReportPanel jobSiteId={jobSiteId} versionId={plan.version.id} versionN={plan.version.n} isOwner={isOwner} />
       {hasReport ? (
         <details className="group rounded-xl border border-navy-100 bg-white">
           <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
