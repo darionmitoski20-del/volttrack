@@ -6,8 +6,11 @@
 // Deploy via the Supabase Dashboard: Edge Functions -> Deploy a new function ->
 // Via Editor -> name it "plan-ai" -> paste this file. Keep "Verify JWT" ON.
 //
-// Required secret (Edge Functions -> Secrets):
-//   ANTHROPIC_API_KEY  - from console.anthropic.com
+// Required secret (Edge Functions -> Secrets), one of:
+//   ANTHROPIC_API_KEY  - from console.anthropic.com (Claude)
+//   OPENAI_API_KEY     - from platform.openai.com (OpenAI)
+//   AI_PROVIDER        - optional, "anthropic" or "openai" when both keys are set
+//   OPENAI_MODEL       - optional OpenAI model name
 // Optional:
 //   ANTHROPIC_MODEL    - defaults to claude-sonnet-5-5
 //   PLAN_AI_DAILY_PAGES - pages per company per 24 h (default 30)
@@ -93,35 +96,73 @@ Deno.serve(async (req) => {
       .gte('created_at', since);
     if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} pages). Try again tomorrow.` }, 429);
 
-    const key = Deno.env.get('ANTHROPIC_API_KEY');
-    if (!key) return json({ error: 'ANTHROPIC_API_KEY is not set on the server' }, 500);
+    // Provider: Claude (ANTHROPIC_API_KEY) or OpenAI (OPENAI_API_KEY).
+    // AI_PROVIDER = "anthropic" | "openai" picks one when both keys are set.
+    const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY');
+    const openaiKey = Deno.env.get('OPENAI_API_KEY');
+    const provider = Deno.env.get('AI_PROVIDER') ?? (anthropicKey ? 'anthropic' : openaiKey ? 'openai' : '');
+    if (!provider) return json({ error: 'No AI key is set on the server (ANTHROPIC_API_KEY or OPENAI_API_KEY)' }, 500);
 
-    const content = summary
-      ? [{ type: 'text', text: `${SUMMARY_PROMPT}\n\n=== DRAWING SET TEXT ===\n${text.slice(0, 400000)}` }]
-      : [
-          ...images.map((b: string) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
-          { type: 'text', text: PROMPT },
-        ];
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 16000, messages: [{ role: 'user', content }] }),
-    });
-    const out = await r.json();
-    if (!r.ok) return json({ error: out?.error?.message ?? `AI request failed (${r.status})` }, 502);
+    const promptText = summary ? `${SUMMARY_PROMPT}\n\n=== DRAWING SET TEXT ===\n${text.slice(0, 400000)}` : PROMPT;
+    const imgs: string[] = summary ? [] : images;
 
-    const text = (out.content ?? [])
-      .filter((c: { type: string }) => c.type === 'text')
-      .map((c: { text: string }) => c.text)
-      .join('');
-    const m = text.match(/\{[\s\S]*\}/);
+    let answer = '';
+    let usage: unknown = null;
+    if (provider === 'openai') {
+      if (!openaiKey) return json({ error: 'OPENAI_API_KEY is not set on the server' }, 500);
+      const models = [Deno.env.get('OPENAI_MODEL'), 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5-mini', 'gpt-4.1-mini'].filter(Boolean) as string[];
+      const content = [
+        ...imgs.map((b) => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b}`, detail: 'high' } })),
+        { type: 'text', text: promptText },
+      ];
+      let lastErr = '';
+      for (const model of models) {
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${openaiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'user', content }] }),
+        });
+        const out = await r.json();
+        if (r.ok) {
+          answer = out.choices?.[0]?.message?.content ?? '';
+          usage = { model, ...out.usage };
+          lastErr = '';
+          break;
+        }
+        lastErr = out?.error?.message ?? `AI request failed (${r.status})`;
+        // Only try the next model when this one does not exist / is not available to the account.
+        const code = String(out?.error?.code ?? '');
+        if (!(r.status === 404 || code === 'model_not_found' || /model/i.test(lastErr))) break;
+      }
+      if (lastErr) return json({ error: `OpenAI: ${lastErr}` }, 502);
+    } else {
+      if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY is not set on the server' }, 500);
+      const content = [
+        ...imgs.map((b) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b } })),
+        { type: 'text', text: promptText },
+      ];
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 16000, messages: [{ role: 'user', content }] }),
+      });
+      const out = await r.json();
+      if (!r.ok) return json({ error: out?.error?.message ?? `AI request failed (${r.status})` }, 502);
+      answer = (out.content ?? [])
+        .filter((c: { type: string }) => c.type === 'text')
+        .map((c: { text: string }) => c.text)
+        .join('');
+      usage = out.usage;
+    }
+
+    const m = answer.match(/\{[\s\S]*\}/);
     let result: unknown;
     try {
-      result = JSON.parse(m ? m[0] : text);
+      result = JSON.parse(m ? m[0] : answer);
     } catch {
-      result = { notes: [text.slice(0, 4000)] };
+      result = { notes: [answer.slice(0, 4000)] };
     }
-    return json({ result, usage: out.usage });
+    return json({ result, usage });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }

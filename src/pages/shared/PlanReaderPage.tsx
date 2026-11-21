@@ -153,8 +153,8 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
       } catch (aiErr) {
         const msg = errorMessage(aiErr, '');
         showToast(
-          msg.includes('ANTHROPIC_API_KEY') ? 'AI summary is not set up yet' : 'AI summary failed',
-          msg.includes('ANTHROPIC_API_KEY') ? 'Add the Claude API key in Supabase to turn it on.' : msg || 'Try again from the AI summary tab.',
+          msg.includes('API_KEY') || msg.includes('No AI key') ? 'AI summary is not set up yet' : 'AI summary failed',
+          msg.includes('API_KEY') || msg.includes('No AI key') ? 'Add an AI API key (Claude or OpenAI) in Supabase to turn it on.' : msg || 'Try again from the AI summary tab.',
         );
       }
       qc.invalidateQueries({ queryKey: ['plan-ai', jobSiteId] });
