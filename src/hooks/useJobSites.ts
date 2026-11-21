@@ -172,3 +172,16 @@ export function useUpdateJobSite() {
     },
   });
 }
+
+/** Owner: delete a job site (and, only when asked, its time entries). Throws HAS_HOURS:<n> when hours exist. */
+export function useDeleteJobSite() {
+  const { companyId } = useCompanyContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; deleteHours: boolean }) => {
+      const { error } = await supabase.rpc('delete_job_site', { p_job_site_id: input.id, p_delete_hours: input.deleteHours });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateSites(qc, companyId),
+  });
+}

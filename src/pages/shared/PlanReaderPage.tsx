@@ -39,7 +39,7 @@ export function PlanReaderPage() {
   const [tab, setTab] = useState<Tab>('plan');
 
   const tabs: [Tab, string][] = [
-    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['legend', 'Legend (AI)'], ['revisions', 'Revisions'],
+    ['plan', 'Plan'], ['overview', 'Overview'], ['rooms', 'By room'], ['daily', 'Daily report'], ['revisions', 'Revisions'],
   ];
   if (isOwner) tabs.push(['review', 'Review']);
 

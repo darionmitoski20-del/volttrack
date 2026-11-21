@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, UserPlus, X, MapPin, ScanLine } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Pencil, UserPlus, X, MapPin, ScanLine, Trash2 } from 'lucide-react';
 import { formatDate, formatDuration, formatTime, minutesBetween } from '@/lib/datetime';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
-import { useJobSite } from '@/hooks/useJobSites';
+import { useJobSite, useDeleteJobSite, useUpdateJobSite } from '@/hooks/useJobSites';
 import {
   useAssignments,
   useAssignEmployee,
@@ -17,6 +17,11 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/form';
 import { QueryBoundary, EmptyState, SkeletonRows } from '@/components/ui/states';
 import { JobSiteFormModal } from '@/components/forms/JobSiteFormModal';
+import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/form';
+import { useToast } from '@/components/ui/Toast';
+import { errorMessage } from '@/lib/supabase';
+import type { JobSite } from '@/lib/database.types';
 
 export function JobSiteDetailPage() {
   const { id = '' } = useParams();
@@ -29,6 +34,7 @@ export function JobSiteDetailPage() {
   const entries = useTimeEntries({ jobSiteId: id });
 
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [pickEmployee, setPickEmployee] = useState('');
 
   const assignable = useMemo(() => {
@@ -60,6 +66,9 @@ export function JobSiteDetailPage() {
                   </Link>
                   <Button variant="secondary" icon={<Pencil className="h-4 w-4" />} onClick={() => setEditOpen(true)}>
                     Edit
+                  </Button>
+                  <Button variant="secondary" className="text-red-600" icon={<Trash2 className="h-4 w-4" />} onClick={() => setDeleteOpen(true)}>
+                    Delete
                   </Button>
                 </>
               }
@@ -196,9 +205,100 @@ export function JobSiteDetailPage() {
             </QueryBoundary>
 
             <JobSiteFormModal open={editOpen} onClose={() => setEditOpen(false)} site={s} />
+            <DeleteJobSiteModal open={deleteOpen} onClose={() => setDeleteOpen(false)} site={s} />
           </>
         )}
       </QueryBoundary>
     </div>
+  );
+}
+
+function DeleteJobSiteModal({ open, onClose, site }: { open: boolean; onClose: () => void; site: JobSite }) {
+  const del = useDeleteJobSite();
+  const update = useUpdateJobSite();
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+  const [hours, setHours] = useState<number | null>(null);
+  const [typed, setTyped] = useState('');
+  const [err, setErr] = useState('');
+
+  const close = () => {
+    setHours(null);
+    setTyped('');
+    setErr('');
+    onClose();
+  };
+
+  const remove = async (deleteHours: boolean) => {
+    setErr('');
+    try {
+      await del.mutateAsync({ id: site.id, deleteHours });
+      showToast('Job site deleted', site.name);
+      close();
+      navigate('/app/job-sites', { replace: true });
+    } catch (e) {
+      const msg = errorMessage(e, 'Could not delete the job site.');
+      const m = msg.match(/HAS_HOURS:(\d+)/);
+      if (m) setHours(Number(m[1]));
+      else setErr(msg);
+    }
+  };
+
+  const archive = async () => {
+    setErr('');
+    try {
+      await update.mutateAsync({
+        id: site.id,
+        name: site.name,
+        client_name: site.client_name,
+        address: site.address,
+        description: site.description,
+        status: 'archived',
+        estimated_hours: site.estimated_hours,
+        start_date: site.start_date,
+        end_date: site.end_date,
+        budget_amount: (site as JobSite & { budget_amount?: number | null }).budget_amount ?? null,
+      } as never);
+      showToast('Job site archived', 'Hours are kept for payroll and reports');
+      close();
+    } catch (e) {
+      setErr(errorMessage(e, 'Could not archive the job site.'));
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={close} title="Delete job site">
+      <div className="space-y-4">
+        {hours === null ? (
+          <>
+            <p className="text-sm text-ink">
+              Delete <b>{site.name}</b>? Its plans, plan reports, drawings, materials and assignments are deleted too. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={close}>Cancel</Button>
+              <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} loading={del.isPending} onClick={() => remove(false)}>Delete</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-ink">
+              <b>{site.name}</b> has <b>{hours}</b> time {hours === 1 ? 'entry' : 'entries'} (worked hours). Those are payroll records.
+            </p>
+            <p className="text-sm text-ink-muted">
+              <b>Archive</b> hides the site and keeps the hours. To delete everything, hours included, type the site name below.
+            </p>
+            <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={site.name} aria-label="Type the job site name" />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={close}>Cancel</Button>
+              <Button variant="primary" loading={update.isPending} onClick={archive}>Archive instead</Button>
+              <Button variant="danger" disabled={typed.trim() !== site.name.trim()} loading={del.isPending} onClick={() => remove(true)}>
+                Delete with hours
+              </Button>
+            </div>
+          </>
+        )}
+        {err && <p className="text-sm text-red-600">{err}</p>}
+      </div>
+    </Modal>
   );
 }

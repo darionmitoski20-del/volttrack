@@ -435,6 +435,7 @@ export interface Database {
         Returns: Company;
       };
       accept_invitation: { Args: { p_token: string }; Returns: CompanyMember };
+      delete_job_site: { Args: { p_job_site_id: string; p_delete_hours?: boolean }; Returns: undefined };
       clock_in: { Args: { p_job_site_id: string; p_note?: string | null }; Returns: TimeEntry };
       start_break: { Args: { p_time_entry_id: string }; Returns: Break };
       end_break: { Args: { p_time_entry_id: string }; Returns: Break };
