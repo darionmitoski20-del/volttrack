@@ -252,7 +252,7 @@ Deno.serve(async (req) => {
       if (!v || v.company_id !== company_id) return json({ error: 'Plan version not found' }, 404);
 
       const { count } = await admin.from('plan_ai_pages').select('id', { count: 'exact', head: true })
-        .eq('company_id', company_id).eq('page', 0).gte('created_at', since);
+        .eq('company_id', company_id).lte('page', 0).gte('created_at', since);
       if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} plans). Try again tomorrow.` }, 429);
 
       // The previous version's report, so the AI can list what changed.
@@ -281,9 +281,14 @@ Deno.serve(async (req) => {
       const planText = typeof text === 'string' ? text.slice(0, 400000) : '';
       if (!pdf && !planText) return json({ error: 'No PDF or text to read' }, 400);
 
-      await admin.from('plan_ai_pages').delete().eq('version_id', version_id).eq('page', 0);
+      // A finished report stays until the new reading succeeds: the new job goes to page -1
+      // and replaces page 0 only when it is done.
+      const { data: current } = await admin.from('plan_ai_pages').select('id, status').eq('version_id', version_id).eq('page', 0).maybeSingle();
+      const keepOld = current?.status === 'done';
+      await admin.from('plan_ai_pages').delete().eq('version_id', version_id).eq('page', keepOld ? -1 : 0);
+      if (!keepOld) await admin.from('plan_ai_pages').delete().eq('version_id', version_id).eq('page', -1);
       const row = {
-        company_id, job_site_id: v.job_site_id, version_id, page: 0, title: 'Plan report',
+        company_id, job_site_id: v.job_site_id, version_id, page: keepOld ? -1 : 0, title: 'Plan report',
         created_by: u.user.id, updated_at: new Date().toISOString(),
       };
 
@@ -318,9 +323,19 @@ Deno.serve(async (req) => {
     // ---------------------------------------------------------------- check a plan report
     if (action === 'poll') {
       const { version_id } = body;
-      const { data: row } = await admin.from('plan_ai_pages').select('*').eq('version_id', version_id).eq('page', 0)
+      // A re-reading in progress (page -1) is checked first; the old report (page 0) stays meanwhile.
+      const { data: pending } = await admin.from('plan_ai_pages').select('*').eq('version_id', version_id).eq('page', -1)
+        .eq('company_id', company_id).eq('status', 'running').maybeSingle();
+      const { data: main } = pending ? { data: null } : await admin.from('plan_ai_pages').select('*').eq('version_id', version_id).eq('page', 0)
         .eq('company_id', company_id).maybeSingle();
+      const row = pending ?? main;
       if (!row) return json({ status: 'none' });
+      // When a re-reading finishes, it takes the old report's place.
+      const promote = async () => {
+        if (row.page !== -1) return;
+        await admin.from('plan_ai_pages').delete().eq('version_id', version_id).eq('page', 0);
+        await admin.from('plan_ai_pages').update({ page: 0 }).eq('id', row.id);
+      };
       if (row.status !== 'running' || !row.job_id) return json({ status: row.status, error: row.error });
       if (row.job_id.startsWith('claude:')) {
         const model = (row.result as { model?: string })?.model ?? CLAUDE_MODEL;
@@ -329,6 +344,7 @@ Deno.serve(async (req) => {
           if (answer === null) return json({ status: 'running' });
           const result = { ...(parseJson(answer) as object), model };
           await admin.from('plan_ai_pages').update({ status: 'done', result, updated_at: new Date().toISOString() }).eq('id', row.id);
+          await promote();
           return json({ status: 'done' });
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -340,6 +356,7 @@ Deno.serve(async (req) => {
       if (out.status === 'completed') {
         const result = { ...(parseJson(openaiText(out)) as object), model: out.model };
         await admin.from('plan_ai_pages').update({ status: 'done', result, updated_at: new Date().toISOString() }).eq('id', row.id);
+        await promote();
         return json({ status: 'done' });
       }
       if (['failed', 'cancelled', 'incomplete'].includes(out.status)) {
@@ -352,6 +369,7 @@ Deno.serve(async (req) => {
           result: partial ? { ...(parseJson(partial) as object), model: out.model } : row.result,
           updated_at: new Date().toISOString(),
         }).eq('id', row.id);
+        if (partial) await promote();
         return json({ status: partial ? 'done' : 'error', error: err });
       }
       return json({ status: 'running' });

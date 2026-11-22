@@ -4,7 +4,7 @@ import { errorMessage } from '@/lib/supabase';
 import { localInputToUtcIso, minutesBetween, formatDuration } from '@/lib/datetime';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { useMyAssignedSites } from '@/hooks/useAssignments';
-import { useAddHours, useEmployeeOptions, parseOverlapError } from '@/hooks/useAddHours';
+import { useAddHours, useEmployeeOptions, parseOverlapError, type OverlapInfo } from '@/hooks/useAddHours';
 import { useEmployeeCreateJobSite } from '@/hooks/useEmployeeJobSite';
 import { Modal, ConfirmDialog } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -66,7 +66,7 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
   const [selectedCoworkers, setSelectedCoworkers] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
-  const [overlapInfo, setOverlapInfo] = useState<{ entryId: string; range: string } | null>(null);
+  const [overlapInfo, setOverlapInfo] = useState<OverlapInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showCoworkers, setShowCoworkers] = useState(false);
 
@@ -409,8 +409,10 @@ export function AddHoursModal({ open, onClose }: { open: boolean; onClose: () =>
 
       <ConfirmDialog
         open={!!overlapInfo}
-        title="Overlapping entry"
-        message="You already have a time entry that overlaps with this period. Save anyway?"
+        title={overlapInfo?.coworkers ? "Coworkers already have hours" : "Overlapping entry"}
+        message={overlapInfo?.coworkers
+          ? `${overlapInfo.coworkers} already ${overlapInfo.coworkers.includes(',') ? 'have' : 'has'} hours at this time, so they will be skipped. Save your hours anyway?`
+          : 'You already have a time entry that overlaps with this period. Save anyway? Coworkers who already have hours at this time are skipped.'}
         confirmLabel="Save anyway"
         tone="danger"
         onConfirm={() => {

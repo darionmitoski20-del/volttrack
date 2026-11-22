@@ -12,16 +12,16 @@ import { AI_MODELS, askAi, openPdf, pollAiReport, pollAsk, startAiReport, type A
 interface ReportRow { status: string; error: string | null; result: AiReport; updated_at: string }
 interface QuestionRow { id: string; question: string; answer: string | null; status: string; created_at: string; user: { full_name: string } | null }
 
-export function useReportRow(jobSiteId: string, versionId: string) {
+export function useReportRow(jobSiteId: string, versionId: string, page = 0) {
   return useQuery({
-    queryKey: ['plan-ai-report', versionId],
+    queryKey: ['plan-ai-report', versionId, page],
     queryFn: async (): Promise<ReportRow | null> => {
       const { data, error } = await supabase
         .from('plan_ai_pages')
         .select('status, error, result, updated_at')
         .eq('job_site_id', jobSiteId)
         .eq('version_id', versionId)
-        .eq('page', 0)
+        .eq('page', page)
         .maybeSingle();
       if (error) throw error;
       return (data as ReportRow | null) ?? null;
@@ -35,15 +35,18 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
   const qc = useQueryClient();
   const { showToast } = useToast();
   const row = useReportRow(jobSiteId, versionId);
+  // A new reading of a plan that already has a report (the old one stays until it is done).
+  const pending = useReportRow(jobSiteId, versionId, -1);
   const [starting, setStarting] = useState(false);
   const [needFile, setNeedFile] = useState(false);
   const [prog, setProg] = useState('');
   const [model, setModel] = useState('');
   const status = row.data?.status;
+  const rereading = pending.data?.status === 'running';
 
   // While the AI works in the background, ask the server every 8 s whether it is done.
   useEffect(() => {
-    if (status !== 'running') return;
+    if (status !== 'running' && !rereading) return;
     let stop = false;
     const tick = async () => {
       try {
@@ -57,7 +60,7 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
       stop = true;
       clearInterval(t);
     };
-  }, [status, companyId, versionId, qc]);
+  }, [status, rereading, companyId, versionId, qc]);
 
   const start = async () => {
     setStarting(true);
@@ -161,8 +164,16 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
   return (
     <div className="space-y-4">
       {filePicker}
+      {rereading && (
+        <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-ink">
+          <Loader2 className="h-4 w-4 animate-spin text-volt-600" /> AI is reading the plan again. This report stays until the new one is ready.
+        </p>
+      )}
+      {isOwner && pending.data?.status === 'error' && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">The new reading failed ({pending.data.error ?? 'unknown error'}). This is still the previous report.</p>
+      )}
       {row.data.error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{row.data.error}</p>}
-      <ReportView r={row.data.result} isOwner={isOwner} onRerun={start} rerunning={starting} picker={modelPicker} />
+      <ReportView r={row.data.result} isOwner={isOwner} onRerun={start} rerunning={starting || rereading} picker={modelPicker} />
       <Questions jobSiteId={jobSiteId} versionId={versionId} />
     </div>
   );

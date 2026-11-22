@@ -34,7 +34,10 @@ const DISCIPLINES = [[/^FIRE ALARM/, 'Fire alarm'], [/^LOW[ -]VOLTAGE/, 'Low vol
 const FLOORS = { BASEMENT: ['Basement', 0], GROUND: ['Ground floor', 1], FIRST: ['1st floor', 1], '1ST': ['1st floor', 1], SECOND: ['2nd floor', 2], '2ND': ['2nd floor', 2], THIRD: ['3rd floor', 3], '3RD': ['3rd floor', 3], FOURTH: ['4th floor', 4], '4TH': ['4th floor', 4] };
 const TITLE_RE = /\b(BASEMENT|GROUND|FIRST|1ST|SECOND|2ND|THIRD|3RD|FOURTH|4TH)\s+FLOOR\s+(?:ELECTRICAL\s+)?(FIRE ALARM|LOW[ -]VOLTAGE|LIGHTING|POWER)\s+PLAN\b/g;
 const SKIP_RE = /DEMOLITION|TEMPORARY|DEMO\b/;
-const SHEETNO_RE = /^(E|FA|EL|EP|ES|T)\d{1,2}\.\d{1,2}[A-Z]?$/;
+// E0.01, E.0.1, E-2.0, E-101, FA1.01 …
+const SHEETNO_RE = /^(E|FA|EL|EP|ES|T)(\d{1,2}\.\d{1,2}|[-.]\d{1,3}(\.\d{1,2})?|\d{3})[A-Z]?$/;
+// Cover / index sheets list every plan title in their drawing list — they are not plans.
+const INDEX_RE = /\b(DRAWING (LIST|INDEX|SCHEDULE)|SHEET INDEX|LIST OF DRAWINGS|INDEX OF DRAWINGS)\b/;
 const LAYER_GROUPS = {
   'Power': [['pwr', /^E-New-Powr-Wall$/]],
   'Low voltage': [['lv', /^E-(New-Powr-Wall|Wall-Powr-Neww)$/]],
@@ -385,7 +388,8 @@ export async function findSheets(pdfDoc, progress) {
       const L = l.toUpperCase().replace(/\s+/g, ' ');
       for (const m of L.matchAll(TITLE_RE)) { const pre = L.slice(Math.max(0, m.index - 40), m.index); if (SKIP_RE.test(pre + m[0])) continue; titles.push(m); }
     }
-    if (!titles.length || new Set(titles.map(t => t[0])).size > 2) { page.cleanup(); continue; }
+    const isIndex = [...lines(W), ...W.raw].some(l => INDEX_RE.test(l.toUpperCase().replace(/\s+/g, ' ')));
+    if (isIndex || !titles.length || new Set(titles.map(t => t[0])).size > 2) { page.cleanup(); continue; }
     const m = titles[0], disc = DISCIPLINES.find(([re]) => re.test(m[2]))[1], [floor, level] = FLOORS[m[1]];
     const nums = W.filter(w => SHEETNO_RE.test(w[4]));
     const number = nums.length ? nums.reduce((a, b) => (b[3] - b[1] > a[3] - a[1] ? b : a))[4] : `p.${pg}`;

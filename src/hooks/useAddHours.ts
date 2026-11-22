@@ -15,9 +15,13 @@ export interface AddHoursInput {
 export interface OverlapInfo {
   entryId: string;
   range: string;
+  /** Set when coworkers (not you) already have hours in that time. */
+  coworkers?: string;
 }
 
 export function parseOverlapError(msg: string): OverlapInfo | null {
+  const cw = msg.match(/coworker_overlap::(.+)/);
+  if (cw) return { entryId: '', range: '', coworkers: cw[1]!.trim() };
   const match = msg.match(/overlap::([^:]+)::(.+)/);
   if (!match) return null;
   return { entryId: match[1]!, range: match[2]! };
