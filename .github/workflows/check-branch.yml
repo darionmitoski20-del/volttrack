@@ -23,7 +23,7 @@ jobs:
         run: |
           npx tsc -p tsconfig.app.json --noEmit > tsc.txt 2>&1 || true
           echo "Total TypeScript errors in repo: $(grep -c 'error TS' tsc.txt || true)"
-          grep -E 'planreader|usePlans|PlanReaderPage|App\.tsx|JobSiteDetailPage|EmployeeJobSitesPage|database\.types' tsc.txt > mine.txt || true
+          grep -E 'planreader|usePlans|PlanReaderPage|App\.tsx|JobSiteDetailPage|EmployeeJobSitesPage|database\.types|BillingCard|SettingsPage|SignIn|useAddHours|AddHoursModal' tsc.txt > mine.txt || true
           cat mine.txt
           test ! -s mine.txt
 
