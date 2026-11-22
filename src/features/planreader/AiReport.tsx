@@ -5,9 +5,9 @@ import { supabase, errorMessage } from '@/lib/supabase';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Textarea } from '@/components/ui/form';
+import { Select, Textarea } from '@/components/ui/form';
 import { useToast } from '@/components/ui/Toast';
-import { askAi, openPdf, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport, type AiTrade } from './ai';
+import { AI_MODELS, askAi, openPdf, pollAiReport, pollAsk, startAiReport, type AiCount, type AiReport, type AiTrade } from './ai';
 
 interface ReportRow { status: string; error: string | null; result: AiReport; updated_at: string }
 interface QuestionRow { id: string; question: string; answer: string | null; status: string; created_at: string; user: { full_name: string } | null }
@@ -38,6 +38,7 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
   const [starting, setStarting] = useState(false);
   const [needFile, setNeedFile] = useState(false);
   const [prog, setProg] = useState('');
+  const [model, setModel] = useState('');
   const status = row.data?.status;
 
   // While the AI works in the background, ask the server every 8 s whether it is done.
@@ -61,7 +62,7 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
   const start = async () => {
     setStarting(true);
     try {
-      await startAiReport({ companyId, versionId });
+      await startAiReport({ companyId, versionId, model });
       void qc.invalidateQueries({ queryKey: ['plan-ai-report', versionId] });
     } catch (e) {
       const msg = errorMessage(e, 'Try again.');
@@ -78,7 +79,7 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
     setStarting(true);
     try {
       const doc = await openPdf(file);
-      await startAiReport({ companyId, versionId, jobSiteId, versionN, file, doc, onProgress: (m) => setProg(m) });
+      await startAiReport({ companyId, versionId, jobSiteId, versionN, file, doc, model, onProgress: (m) => setProg(m) });
       setNeedFile(false);
       void qc.invalidateQueries({ queryKey: ['plan-ai-report', versionId] });
     } catch (e) {
@@ -88,6 +89,12 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
       setProg('');
     }
   };
+
+  const modelPicker = isOwner && (
+    <Select aria-label="AI model" value={model} onChange={(e) => setModel(e.target.value)} className="h-9 max-w-[16rem] text-sm">
+      {AI_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+    </Select>
+  );
 
   const filePicker = needFile && (
     <Card className="border-volt-300">
@@ -111,7 +118,10 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
             <Sparkles className="h-5 w-5 text-volt-600" />
             <p className="text-sm text-ink">AI has not read this plan yet.</p>
           </div>
-          <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={starting} onClick={start}>Read the plan with AI</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {modelPicker}
+            <Button variant="primary" icon={<Sparkles className="h-4 w-4" />} loading={starting} onClick={start}>Read the plan with AI</Button>
+          </div>
         </CardBody>
       </Card>
     );
@@ -137,7 +147,12 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
       <Card className="border-red-200">
         <CardBody className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-red-700">AI reading failed: {row.data.error ?? 'unknown error'}</p>
-          {isOwner && <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={starting} onClick={start}>Try again</Button>}
+          {isOwner && (
+            <div className="flex flex-wrap items-center gap-2">
+              {modelPicker}
+              <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} loading={starting} onClick={start}>Try again</Button>
+            </div>
+          )}
         </CardBody>
       </Card>
     );
@@ -147,7 +162,7 @@ export function AiReportPanel({ jobSiteId, versionId, versionN, isOwner }: { job
     <div className="space-y-4">
       {filePicker}
       {row.data.error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{row.data.error}</p>}
-      <ReportView r={row.data.result} isOwner={isOwner} onRerun={start} rerunning={starting} />
+      <ReportView r={row.data.result} isOwner={isOwner} onRerun={start} rerunning={starting} picker={modelPicker} />
       <Questions jobSiteId={jobSiteId} versionId={versionId} />
     </div>
   );
@@ -223,7 +238,7 @@ function Pills<T extends string>({ value, options, onChange }: { value: T; optio
   );
 }
 
-function ReportView({ r, isOwner, onRerun, rerunning }: { r: AiReport; isOwner: boolean; onRerun: () => void; rerunning: boolean }) {
+function ReportView({ r, isOwner, onRerun, rerunning, picker }: { r: AiReport; isOwner: boolean; onRerun: () => void; rerunning: boolean; picker: React.ReactNode }) {
   const d = useMemo(() => shape(r), [r]);
   const project = typeof r.project === 'string' ? { name: r.project } : r.project ?? {};
   const tabs = [
@@ -245,7 +260,12 @@ function ReportView({ r, isOwner, onRerun, rerunning }: { r: AiReport; isOwner: 
             </div>
             <p className="mt-0.5 text-sm text-ink-muted">{[project.address, project.issue_date].filter(Boolean).join(' · ')}</p>
           </div>
-          {isOwner && <Button size="sm" variant="ghost" icon={<RefreshCw className="h-4 w-4" />} loading={rerunning} onClick={onRerun}>Read again</Button>}
+          {isOwner && (
+            <div className="flex flex-wrap items-center gap-2">
+              {picker}
+              <Button size="sm" variant="ghost" icon={<RefreshCw className="h-4 w-4" />} loading={rerunning} onClick={onRerun}>Read again</Button>
+            </div>
+          )}
         </div>
 
         {(r.changes?.length ?? 0) > 0 && (

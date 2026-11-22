@@ -37,6 +37,8 @@ const PROVIDER = Deno.env.get('AI_PROVIDER') ?? (OPENAI_KEY ? 'openai' : ANTHROP
 const OPENAI_MODELS = [Deno.env.get('OPENAI_MODEL'), 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5', 'gpt-4.1']
   .filter(Boolean) as string[];
 const CLAUDE_MODEL = Deno.env.get('ANTHROPIC_MODEL') ?? 'claude-opus-5-5';
+// Models the owner may pick when reading a plan (to compare quality and price).
+const PICKABLE = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'];
 const DAILY = Number(Deno.env.get('PLAN_AI_DAILY') ?? '20');
 const DAILY_Q = 60;
 const MAX_PDF = 32 * 1024 * 1024; // OpenAI / Claude file limit
@@ -119,9 +121,9 @@ async function openaiUpload(blob: Blob, name: string): Promise<string> {
 }
 
 // deno-lint-ignore no-explicit-any
-async function openaiStart(content: any[], asJson: boolean): Promise<{ id: string; model: string }> {
+async function openaiStart(content: any[], asJson: boolean, prefer?: string): Promise<{ id: string; model: string }> {
   let last = '';
-  for (const model of OPENAI_MODELS) {
+  for (const model of prefer ? [prefer] : OPENAI_MODELS) {
     const body: Record<string, unknown> = {
       model,
       background: true,
@@ -172,6 +174,39 @@ async function claude(content: any[], maxTokens: number): Promise<string> {
   return (out.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
 }
 
+// Claude in the background: a one-request Message Batch (no time limit, half price).
+// deno-lint-ignore no-explicit-any
+async function claudeBatchStart(model: string, content: any[], maxTokens: number): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages/batches', {
+    method: 'POST',
+    headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ requests: [{ custom_id: 'plan', params: { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] } }] }),
+  });
+  const out = await r.json();
+  if (!r.ok) throw new Error(`Claude: ${out?.error?.message ?? r.status}`);
+  return out.id;
+}
+
+/** null while running; text when done; throws when the request failed. */
+async function claudeBatchGet(id: string): Promise<string | null> {
+  const h = { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' };
+  const r = await fetch(`https://api.anthropic.com/v1/messages/batches/${id}`, { headers: h });
+  const out = await r.json();
+  if (!r.ok) throw new Error(`Claude: ${out?.error?.message ?? r.status}`);
+  if (out.processing_status !== 'ended') return null;
+  const res = await fetch(out.results_url, { headers: h });
+  const lines = (await res.text()).split('\n').filter(Boolean);
+  for (const line of lines) {
+    const item = JSON.parse(line);
+    if (item.result?.type === 'succeeded') {
+      // deno-lint-ignore no-explicit-any
+      return (item.result.message?.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+    }
+    throw new Error(`Claude: ${item.result?.error?.error?.message ?? item.result?.error?.message ?? item.result?.type ?? 'failed'}`);
+  }
+  throw new Error('Claude: empty result');
+}
+
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let s = '';
@@ -208,6 +243,10 @@ Deno.serve(async (req) => {
     // ---------------------------------------------------------------- start a plan report
     if (action === 'start') {
       if (!isOwner) return json({ error: 'Only the owner can start AI reading' }, 403);
+      const picked = typeof body.model === 'string' && PICKABLE.includes(body.model) ? body.model : null;
+      const useClaude = picked ? picked.startsWith('claude') : PROVIDER === 'anthropic';
+      if (useClaude && !ANTHROPIC_KEY) return json({ error: 'ANTHROPIC_API_KEY is not set on the server' }, 500);
+      if (!useClaude && !OPENAI_KEY) return json({ error: 'OPENAI_API_KEY is not set on the server' }, 500);
       const { version_id, text } = body;
       const { data: v } = await admin.from('plan_versions').select('id, n, job_site_id, company_id, pdf_path, file_name').eq('id', version_id).maybeSingle();
       if (!v || v.company_id !== company_id) return json({ error: 'Plan version not found' }, 404);
@@ -248,7 +287,7 @@ Deno.serve(async (req) => {
         created_by: u.user.id, updated_at: new Date().toISOString(),
       };
 
-      if (PROVIDER === 'openai') {
+      if (!useClaude) {
         // deno-lint-ignore no-explicit-any
         const content: any[] = [];
         let fileId: string | null = null;
@@ -259,26 +298,21 @@ Deno.serve(async (req) => {
           content.push({ type: 'input_text', text: `DRAWING SET TEXT (the PDF was too large to attach):\n${planText}` });
         }
         content.push({ type: 'input_text', text: prompt });
-        const job = await openaiStart(content, true);
+        const job = await openaiStart(content, true, picked ?? undefined);
         await admin.from('plan_ai_pages').insert({ ...row, status: 'running', job_id: job.id, file_id: fileId, result: { model: job.model } });
         return json({ status: 'running' });
       }
 
-      // Claude: reads right away (smaller plans).
+      // Claude: one-request batch, read in the background.
+      const model = picked ?? CLAUDE_MODEL;
       // deno-lint-ignore no-explicit-any
       const content: any[] = pdf
         ? [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: toBase64(await pdf.arrayBuffer()) } }]
         : [{ type: 'text', text: `DRAWING SET TEXT:\n${planText}` }];
       content.push({ type: 'text', text: prompt });
-      try {
-        const answer = await claude(content, 32000);
-        const result = { ...(parseJson(answer) as object), model: CLAUDE_MODEL };
-        await admin.from('plan_ai_pages').insert({ ...row, status: 'done', result });
-        return json({ status: 'done' });
-      } catch (e) {
-        await admin.from('plan_ai_pages').insert({ ...row, status: 'error', error: String(e instanceof Error ? e.message : e), result: {} });
-        throw e;
-      }
+      const batchId = await claudeBatchStart(model, content, 64000);
+      await admin.from('plan_ai_pages').insert({ ...row, status: 'running', job_id: `claude:${batchId}`, result: { model } });
+      return json({ status: 'running' });
     }
 
     // ---------------------------------------------------------------- check a plan report
@@ -287,7 +321,21 @@ Deno.serve(async (req) => {
       const { data: row } = await admin.from('plan_ai_pages').select('*').eq('version_id', version_id).eq('page', 0)
         .eq('company_id', company_id).maybeSingle();
       if (!row) return json({ status: 'none' });
-      if (row.status !== 'running' || !row.job_id || PROVIDER !== 'openai') return json({ status: row.status, error: row.error });
+      if (row.status !== 'running' || !row.job_id) return json({ status: row.status, error: row.error });
+      if (row.job_id.startsWith('claude:')) {
+        const model = (row.result as { model?: string })?.model ?? CLAUDE_MODEL;
+        try {
+          const answer = await claudeBatchGet(row.job_id.slice(7));
+          if (answer === null) return json({ status: 'running' });
+          const result = { ...(parseJson(answer) as object), model };
+          await admin.from('plan_ai_pages').update({ status: 'done', result, updated_at: new Date().toISOString() }).eq('id', row.id);
+          return json({ status: 'done' });
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          await admin.from('plan_ai_pages').update({ status: 'error', error: err, updated_at: new Date().toISOString() }).eq('id', row.id);
+          return json({ status: 'error', error: err });
+        }
+      }
       const out = await openaiGet(row.job_id);
       if (out.status === 'completed') {
         const result = { ...(parseJson(openaiText(out)) as object), model: out.model };

@@ -293,6 +293,7 @@ export async function startAiReport(opts: {
   versionN?: number;
   file?: File;
   doc?: any;
+  model?: string;
   onProgress?: (m: string, p: number) => void;
 }) {
   let text = '';
@@ -305,8 +306,19 @@ export async function startAiReport(opts: {
     text = await planText(opts.doc, (p) => opts.onProgress?.('Preparing the plan for AI…', p));
   }
   opts.onProgress?.('Sending the plan to AI…', 1);
-  return callAi({ action: 'start', company_id: opts.companyId, version_id: opts.versionId, text, ai_pdf_path: aiPdfPath });
+  return callAi({ action: 'start', company_id: opts.companyId, version_id: opts.versionId, text, ai_pdf_path: aiPdfPath, model: opts.model || undefined });
 }
+
+/** Models the owner can choose for a reading ('' = the server default). */
+export const AI_MODELS: { id: string; label: string }[] = [
+  { id: '', label: 'Default model' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (cheapest)' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (strongest Claude)' },
+  { id: 'gpt-6.1-terra', label: 'OpenAI gpt-6.1-terra' },
+  { id: 'gpt-6.1-sol', label: 'OpenAI gpt-6.1-sol' },
+  { id: 'gpt-6-astra', label: 'OpenAI gpt-6-astra (strongest OpenAI)' },
+];
 
 export const pollAiReport = (companyId: string, versionId: string) =>
   callAi({ action: 'poll', company_id: companyId, version_id: versionId }) as Promise<{ status: string; error?: string }>;
