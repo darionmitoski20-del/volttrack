@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Briefcase, HardHat } from 'lucide-react';
 import { useAuth } from '@/features/auth/AuthProvider';
 import { errorMessage } from '@/lib/supabase';
@@ -11,6 +11,9 @@ type Who = 'owner' | 'employee';
 export function SignIn() {
   const { enterDemo } = useAuth();
   const navigate = useNavigate();
+  // Coming from the pricing page with a package picked: the owner goes straight to Plan & billing.
+  const [params] = useSearchParams();
+  const plan = params.get('plan');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Who | null>(null);
 
@@ -19,7 +22,8 @@ export function SignIn() {
     setBusy(who);
     try {
       await enterDemo(who);
-      navigate('/', { replace: true });
+      if (plan && who === 'owner') navigate(`/app/settings?plan=${encodeURIComponent(plan)}#billing`, { replace: true });
+      else navigate('/', { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'Unable to sign in.'));
     } finally {
@@ -28,7 +32,7 @@ export function SignIn() {
   };
 
   return (
-    <AuthLayout title="Sign in" subtitle="Choose how you want to enter.">
+    <AuthLayout title="Sign in" subtitle={plan ? 'Enter as Owner to start your plan.' : 'Choose how you want to enter.'}>
       <div className="space-y-3">
         {error && (
           <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">

@@ -375,6 +375,26 @@ export interface PlanAiPage {
   created_at: string;
 }
 
+export interface CompanyBilling {
+  company_id: string;
+  plan: string;
+  reads_per_month: number;
+  status: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  current_period_end: string | null;
+  trial_end: string | null;
+  updated_at: string;
+}
+
+export interface PlanAiUsage {
+  id: string;
+  company_id: string;
+  version_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface PlanAiQuestion {
   id: string;
   company_id: string;
@@ -427,6 +447,8 @@ export interface Database {
       plan_drawings: TableDef<PlanDrawing>;
       plan_ai_pages: TableDef<PlanAiPage>;
       plan_ai_questions: TableDef<PlanAiQuestion>;
+      company_billing: TableDef<CompanyBilling>;
+      plan_ai_usage: TableDef<PlanAiUsage>;
     };
     Views: Record<string, never>;
     Functions: {

@@ -16,6 +16,7 @@ import { FormField, Input, Select } from '@/components/ui/form';
 import { InfoTooltip } from '@/components/ui/Tooltip';
 import { SkeletonRows, EmptyState } from '@/components/ui/states';
 import { LogoUploader } from '@/components/settings/LogoUploader';
+import { BillingCard } from '@/components/settings/BillingCard';
 
 const WEEKDAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -105,6 +106,8 @@ export function SettingsPage() {
       <div className="flex items-center justify-between gap-4">
         <PageHeader title="Company settings" subtitle="Manage your company profile and timezone." />
       </div>
+
+      <BillingCard />
 
       {company.isLoading ? (
         <Card>

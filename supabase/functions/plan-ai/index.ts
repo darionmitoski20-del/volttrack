@@ -251,9 +251,25 @@ Deno.serve(async (req) => {
       const { data: v } = await admin.from('plan_versions').select('id, n, job_site_id, company_id, pdf_path, file_name').eq('id', version_id).maybeSingle();
       if (!v || v.company_id !== company_id) return json({ error: 'Plan version not found' }, 404);
 
-      const { count } = await admin.from('plan_ai_pages').select('id', { count: 'exact', head: true })
-        .eq('company_id', company_id).lte('page', 0).gte('created_at', since);
-      if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} plans). Try again tomorrow.` }, 429);
+      // A paid package gives N reads per calendar month; without a package the daily cap applies.
+      const { data: billing } = await admin.from('company_billing').select('plan, reads_per_month, status')
+        .eq('company_id', company_id).maybeSingle();
+      if (billing && ['active', 'trialing'].includes(billing.status)) {
+        const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+        const { count: used } = await admin.from('plan_ai_usage').select('id', { count: 'exact', head: true })
+          .eq('company_id', company_id).gte('created_at', monthStart);
+        if ((used ?? 0) >= billing.reads_per_month) {
+          return json({ error: `All ${billing.reads_per_month} AI reads of your plan are used this month. Upgrade the plan in Settings → Plan & billing.` }, 402);
+        }
+      } else {
+        if (billing && !['active', 'trialing'].includes(billing.status)) {
+          return json({ error: `Your plan is ${billing.status}. Update it in Settings → Plan & billing.` }, 402);
+        }
+        const { count } = await admin.from('plan_ai_pages').select('id', { count: 'exact', head: true })
+          .eq('company_id', company_id).lte('page', 0).gte('created_at', since);
+        if ((count ?? 0) >= DAILY) return json({ error: `Daily AI limit reached (${DAILY} plans). Try again tomorrow.` }, 429);
+      }
 
       // The previous version's report, so the AI can list what changed.
       const { data: prevV } = await admin.from('plan_versions').select('id').eq('job_site_id', v.job_site_id)
@@ -305,6 +321,7 @@ Deno.serve(async (req) => {
         content.push({ type: 'input_text', text: prompt });
         const job = await openaiStart(content, true, picked ?? undefined);
         await admin.from('plan_ai_pages').insert({ ...row, status: 'running', job_id: job.id, file_id: fileId, result: { model: job.model } });
+        await admin.from('plan_ai_usage').insert({ company_id, version_id, created_by: u.user.id });
         return json({ status: 'running' });
       }
 
@@ -317,6 +334,7 @@ Deno.serve(async (req) => {
       content.push({ type: 'text', text: prompt });
       const batchId = await claudeBatchStart(model, content, 64000);
       await admin.from('plan_ai_pages').insert({ ...row, status: 'running', job_id: `claude:${batchId}`, result: { model } });
+      await admin.from('plan_ai_usage').insert({ company_id, version_id, created_by: u.user.id });
       return json({ status: 'running' });
     }
 
