@@ -98,6 +98,8 @@ Deno.serve(async (req) => {
         'line_items[0][price_data][recurring][interval]': 'month',
         'line_items[0][price_data][product_data][name]': plan.name,
         'line_items[0][price_data][product_data][description]': `${plan.reads} AI plan reads per month, unlimited employees and job sites`,
+        // Tax category: Software as a service, business use (needed when Stripe Tax is on).
+        'line_items[0][price_data][product_data][tax_code]': 'txcd_10103001',
         allow_promotion_codes: 'true',
         success_url: `${back}${sep}billing=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${back}${sep}billing=cancel`,
