@@ -386,6 +386,7 @@ export interface Inspection {
   inspector_phone: string | null;
   status: string;
   notes: string | null;
+  assignee_ids: string[];
   created_by: string | null;
   created_at: string;
   updated_at: string;

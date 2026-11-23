@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CalendarClock, ClipboardCheck, MapPin, Pencil, Phone, Plus, Trash2, User } from 'lucide-react';
+import { CalendarClock, Check, ClipboardCheck, MapPin, Pencil, Phone, Plus, RotateCcw, Trash2, User, Users, X } from 'lucide-react';
 import { errorMessage } from '@/lib/supabase';
 import { localDateKey } from '@/lib/datetime';
 import { useCompanyContext } from '@/hooks/useCompanyContext';
@@ -8,8 +8,10 @@ import {
   INSPECTION_STATUSES,
   INSPECTION_TYPES,
   useDeleteInspection,
+  useCompanyPeople,
   useInspections,
   useSaveInspection,
+  useSetInspectionStatus,
   type InspectionRow,
 } from '@/hooks/useInspections';
 import { PageHeader } from '@/components/ui/widgets';
@@ -36,9 +38,12 @@ function niceTime(t: string | null) {
 
 /** Inspections of all job sites. The owner adds and edits them; employees only see them. */
 export function InspectionsPage() {
-  const { role, timezone } = useCompanyContext();
+  const { role, timezone, userId } = useCompanyContext();
   const isOwner = role === 'owner';
   const list = useInspections();
+  const people = useCompanyPeople();
+  const setStatus = useSetInspectionStatus();
+  const names = useMemo(() => new Map((people.data ?? []).map((p) => [p.id, p.name])), [people.data]);
   const sites = useJobSiteOptions();
   const del = useDeleteInspection();
   const [site, setSite] = useState('');
@@ -92,7 +97,9 @@ export function InspectionsPage() {
             {upcoming.length ? (
               <div className="space-y-2">
                 {upcoming.map((r) => (
-                  <InspectionCard key={r.id} r={r} today={today} isOwner={isOwner} onEdit={() => setEditing(r)} onDelete={() => setDeleting(r)} />
+                  <InspectionCard key={r.id} r={r} today={today} isOwner={isOwner} me={userId} names={names}
+                    onResult={(status) => setStatus.mutate({ id: r.id, status })}
+                    onEdit={() => setEditing(r)} onDelete={() => setDeleting(r)} />
                 ))}
               </div>
             ) : (
@@ -104,7 +111,9 @@ export function InspectionsPage() {
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-muted">Past &amp; done ({past.length})</h2>
               <div className="space-y-2">
                 {past.map((r) => (
-                  <InspectionCard key={r.id} r={r} today={today} isOwner={isOwner} onEdit={() => setEditing(r)} onDelete={() => setDeleting(r)} />
+                  <InspectionCard key={r.id} r={r} today={today} isOwner={isOwner} me={userId} names={names}
+                    onResult={(status) => setStatus.mutate({ id: r.id, status })}
+                    onEdit={() => setEditing(r)} onDelete={() => setDeleting(r)} />
                 ))}
               </div>
             </section>
@@ -137,8 +146,13 @@ export function InspectionsPage() {
   );
 }
 
-function InspectionCard({ r, today, isOwner, onEdit, onDelete }: { r: InspectionRow; today: string; isOwner: boolean; onEdit: () => void; onDelete: () => void }) {
+function InspectionCard({ r, today, isOwner, me, names, onResult, onEdit, onDelete }: {
+  r: InspectionRow; today: string; isOwner: boolean; me: string; names: Map<string, string>;
+  onResult: (status: string) => void; onEdit: () => void; onDelete: () => void;
+}) {
   const st = statusOf(r.status);
+  const going = (r.assignee_ids ?? []).map((id) => (id === me ? 'You' : names.get(id) ?? 'Employee'));
+  const imGoing = (r.assignee_ids ?? []).includes(me);
   const isToday = r.inspection_date === today;
   const overdue = r.status === 'scheduled' && r.inspection_date < today;
   return (
@@ -150,6 +164,7 @@ function InspectionCard({ r, today, isOwner, onEdit, onDelete }: { r: Inspection
             <Badge tone={st.tone}>{st.label}</Badge>
             {isToday && r.status === 'scheduled' && <Badge tone="volt">Today</Badge>}
             {overdue && <Badge tone="warning">Result not entered</Badge>}
+            {imGoing && r.status === 'scheduled' && <Badge tone="volt">You're going</Badge>}
           </div>
           <p className="flex items-center gap-1.5 text-sm text-ink"><MapPin className="h-4 w-4 text-ink-subtle" />{r.job_site?.name ?? 'Job site'}</p>
           <p className="flex items-center gap-1.5 text-sm text-ink"><CalendarClock className="h-4 w-4 text-ink-subtle" />{niceDate(r.inspection_date)}{r.inspection_time ? ` · ${niceTime(r.inspection_time)}` : ''}</p>
@@ -159,7 +174,24 @@ function InspectionCard({ r, today, isOwner, onEdit, onDelete }: { r: Inspection
               {r.inspector_phone && <a href={`tel:${r.inspector_phone}`} className="flex items-center gap-1.5 hover:text-ink"><Phone className="h-4 w-4" />{r.inspector_phone}</a>}
             </p>
           )}
+          {going.length > 0 && (
+            <p className="flex items-start gap-1.5 text-sm text-ink"><Users className="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle" /><span><span className="text-ink-muted">Going:</span> {going.join(', ')}</span></p>
+          )}
           {r.notes && <p className="whitespace-pre-wrap pt-1 text-sm text-ink-muted">{r.notes}</p>}
+          {isOwner && (
+            r.status === 'scheduled' ? (
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <span className="text-xs text-ink-muted">Result:</span>
+                <Button size="sm" variant="success" icon={<Check className="h-4 w-4" />} onClick={() => onResult('passed')}>Passed</Button>
+                <Button size="sm" variant="danger" icon={<X className="h-4 w-4" />} onClick={() => onResult('failed')}>Failed</Button>
+                <Button size="sm" variant="secondary" onClick={() => onResult('partial')}>Partial</Button>
+              </div>
+            ) : r.status !== 'cancelled' && (
+              <button type="button" onClick={() => onResult('scheduled')} className="flex items-center gap-1 pt-1 text-xs text-ink-muted hover:text-ink">
+                <RotateCcw className="h-3 w-3" /> Undo result
+              </button>
+            )
+          )}
         </div>
         {isOwner && (
           <div className="flex gap-1">
@@ -174,7 +206,10 @@ function InspectionCard({ r, today, isOwner, onEdit, onDelete }: { r: Inspection
 
 function InspectionModal({ inspection, defaultSite, today, onClose }: { inspection: InspectionRow | null; defaultSite: string; today: string; onClose: () => void }) {
   const sites = useJobSiteOptions();
+  const people = useCompanyPeople();
   const save = useSaveInspection();
+  const [who, setWho] = useState<string[]>(inspection?.assignee_ids ?? []);
+  const toggle = (id: string) => setWho((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id]));
   const known = !inspection || INSPECTION_TYPES.includes(inspection.type);
   const [f, setF] = useState({
     job_site_id: inspection?.job_site_id ?? defaultSite,
@@ -207,6 +242,7 @@ function InspectionModal({ inspection, defaultSite, today, onClose }: { inspecti
         inspector_phone: f.inspector_phone.trim() || null,
         status: f.status,
         notes: f.notes.trim() || null,
+        assignee_ids: who,
       });
       onClose();
     } catch (err) {
@@ -257,6 +293,18 @@ function InspectionModal({ inspection, defaultSite, today, onClose }: { inspecti
             <Input id="insp-phone" type="tel" value={f.inspector_phone} onChange={set('inspector_phone')} />
           </FormField>
         </div>
+        <FormField label="Who goes" hint="Pick the employees who meet the inspector.">
+          <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl border border-navy-100 p-2">
+            {(people.data ?? []).map((p) => (
+              <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-navy-50">
+                <input type="checkbox" className="h-4 w-4 accent-volt-500" checked={who.includes(p.id)} onChange={() => toggle(p.id)} />
+                <span className="text-ink">{p.name}</span>
+                {p.role === 'owner' && <span className="text-xs text-ink-subtle">owner</span>}
+              </label>
+            ))}
+            {!people.isLoading && !people.data?.length && <p className="px-2 py-1 text-sm text-ink-muted">No employees yet.</p>}
+          </div>
+        </FormField>
         <FormField label="Notes" htmlFor="insp-notes" hint="What must be ready, who meets the inspector, corrections to make…">
           <Textarea id="insp-notes" rows={3} value={f.notes} onChange={set('notes')} />
         </FormField>

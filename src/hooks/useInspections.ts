@@ -51,6 +51,7 @@ export interface InspectionInput {
   inspector_phone: string | null;
   status: string;
   notes: string | null;
+  assignee_ids: string[];
 }
 
 /** Add (no id) or change (id) an inspection. Owner only. */
@@ -67,6 +68,36 @@ export function useSaveInspection() {
           .insert({ ...input, company_id: companyId, created_by: userId });
         if (error) throw error;
       }
+    },
+  });
+}
+
+/** Only change the result (Passed / Failed / Partial…). Owner only. */
+export function useSetInspectionStatus() {
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const { error } = await supabase.from('inspections')
+        .update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+    },
+  });
+}
+
+/** Everyone active in the company (owner included), to pick who goes to an inspection. */
+export function useCompanyPeople() {
+  const { companyId } = useCompanyContext();
+  return useQuery({
+    queryKey: ['company-people', companyId],
+    queryFn: async (): Promise<{ id: string; name: string; role: string }[]> => {
+      const { data, error } = await supabase
+        .from('company_members')
+        .select('user_id, role, profile:profiles!company_members_user_id_fkey(full_name)')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data as any[]).map((m) => ({ id: m.user_id, name: m.profile?.full_name || 'Unnamed', role: m.role }));
     },
   });
 }
