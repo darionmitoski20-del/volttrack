@@ -44,9 +44,9 @@ jobs:
       - name: Static copies for app routes
         run: |
           for r in signin create-company reset-password accept-invitation \
-                   app app/employees app/job-sites app/time-entries app/timesheets app/materials \
+                   app app/employees app/job-sites app/time-entries app/timesheets app/materials app/inspections \
                    app/reports app/live-hours app/analysis app/chat app/settings app/profile \
-                   me me/time-entries me/timesheets me/calendar me/job-sites me/chat me/materials \
+                   me me/time-entries me/timesheets me/calendar me/job-sites me/chat me/materials me/inspections \
                    me/stats me/profile; do
             mkdir -p "dist/$r" && cp dist/index.html "dist/$r/index.html"
             cp dist/index.html "dist/$r.html"   # "/app" answers 200 directly, without a redirect to "/app/"

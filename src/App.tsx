@@ -17,6 +17,7 @@ import { JobSiteDetailPage } from '@/pages/owner/JobSiteDetailPage';
 import { TimeEntriesPage } from '@/pages/owner/TimeEntriesPage';
 import { TimesheetsPage } from '@/pages/owner/TimesheetsPage';
 import { MaterialsPage } from '@/pages/owner/MaterialsPage';
+import { InspectionsPage } from '@/pages/shared/InspectionsPage';
 import { ReportsPage } from '@/pages/owner/ReportsPage';
 import { SettingsPage } from '@/pages/owner/SettingsPage';
 import { OwnerProfilePage } from '@/pages/owner/OwnerProfilePage';
@@ -75,6 +76,7 @@ const router = createBrowserRouter([
                   { path: 'job-sites/:id/plans', element: <PlanReaderPage /> },
                   { path: 'time-entries', element: <TimeEntriesPage /> },
                   { path: 'timesheets', element: <TimesheetsPage /> },
+                  { path: 'inspections', element: <InspectionsPage /> },
                   { path: 'materials', element: <MaterialsPage /> },
                   { path: 'reports', element: <ReportsPage /> },
                   { path: 'live-hours', element: <LiveHoursPage /> },
@@ -102,6 +104,7 @@ const router = createBrowserRouter([
                   { path: 'job-sites', element: <EmployeeJobSitesPage /> },
                   { path: 'job-sites/:id/plans', element: <PlanReaderPage /> },
                   { path: 'chat', element: <ChatPage /> },
+                  { path: 'inspections', element: <InspectionsPage /> },
                   { path: 'materials', element: <EmployeeMaterialsPage /> },
                   { path: 'stats', element: <EmployeeStatsPage /> },
                   { path: 'profile', element: <EmployeeProfilePage /> },

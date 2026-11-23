@@ -13,6 +13,7 @@ import {
   Zap,
   TrendingUp,
   Package,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@/lib/database.types';
@@ -31,6 +32,7 @@ const OWNER_NAV: NavItem[] = [
   { to: '/app/job-sites', label: 'Job Sites', icon: MapPin },
   { to: '/app/time-entries', label: 'Time Entries', icon: Clock },
   { to: '/app/timesheets', label: 'Timesheets', icon: CalendarCheck },
+  { to: '/app/inspections', label: 'Inspections', icon: ClipboardCheck },
   { to: '/app/materials', label: 'Materials', icon: Package },
   { to: '/app/reports', label: 'Reports', icon: BarChart3 },
   { to: '/app/analysis', label: 'Analysis', icon: TrendingUp },
@@ -48,6 +50,7 @@ const EMPLOYEE_NAV: NavItem[] = [
   { to: '/me/materials', label: 'Materials', icon: Package },          // [6]
   { to: '/me/stats', label: 'Stats', icon: BarChart2 },                // [7]
   { to: '/me/profile', label: 'Profile', icon: User },                 // [8]
+  { to: '/me/inspections', label: 'Inspections', icon: ClipboardCheck }, // [9]
 ];
 
 export function navFor(role: Role): NavItem[] {

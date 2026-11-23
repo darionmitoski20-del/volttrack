@@ -375,6 +375,22 @@ export interface PlanAiPage {
   created_at: string;
 }
 
+export interface Inspection {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  type: string;
+  inspection_date: string;
+  inspection_time: string | null;
+  inspector: string | null;
+  inspector_phone: string | null;
+  status: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CompanyBilling {
   company_id: string;
   plan: string;
@@ -448,6 +464,7 @@ export interface Database {
       plan_ai_pages: TableDef<PlanAiPage>;
       plan_ai_questions: TableDef<PlanAiQuestion>;
       company_billing: TableDef<CompanyBilling>;
+      inspections: TableDef<Inspection>;
       plan_ai_usage: TableDef<PlanAiUsage>;
     };
     Views: Record<string, never>;
