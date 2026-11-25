@@ -8,7 +8,7 @@ import {
   useCurrentPlan, usePlanDay, usePlanVersions, usePlanWork, useSheetImages, useTeachSymbol, useUnknownSymbols, planPdfUrl,
   type PlanData, type WorkState,
 } from '@/hooks/usePlans';
-import { PageHeader, Avatar } from '@/components/ui/widgets';
+import { Avatar } from '@/components/ui/widgets';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -47,26 +47,31 @@ export function PlanReaderPage() {
 
   return (
     <div>
-      <Link to={back} className="mb-3 inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
+      <Link to={back} className="mb-2 inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink sm:mb-3">
         <ArrowLeft className="h-4 w-4" /> {site.data?.name ?? 'Job site'}
       </Link>
-      <PageHeader
-        title="Plan Reader"
-        subtitle={plan.data ? `Version ${plan.data.version.n} · ${plan.data.version.file_name}` : 'Upload the electrical plans and track what is installed.'}
-        actions={
-          plan.data?.version.pdf_path ? (
-            <Button
-              variant="secondary"
-              icon={<FileText className="h-4 w-4" />}
-              onClick={async () => window.open(await planPdfUrl(plan.data!.version.pdf_path!), '_blank', 'noopener')}
-            >
-              Open PDF
-            </Button>
-          ) : undefined
-        }
-      />
+      {/* compact header: on a phone the plan needs the room */}
+      <div className="mb-3 flex items-start justify-between gap-3 sm:mb-5">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-ink sm:text-xl">Plan Reader</h1>
+          <p className="truncate text-xs text-ink-muted sm:text-sm">
+            {plan.data ? `Version ${plan.data.version.n} · ${plan.data.version.file_name}` : 'Upload the electrical plans and track what is installed.'}
+          </p>
+        </div>
+        {plan.data?.version.pdf_path && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
+            icon={<FileText className="h-4 w-4" />}
+            onClick={async () => window.open(await planPdfUrl(plan.data!.version.pdf_path!), '_blank', 'noopener')}
+          >
+            PDF
+          </Button>
+        )}
+      </div>
 
-      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-navy-100">
+      <div className="-mx-4 mb-3 flex gap-1 overflow-x-auto border-b border-navy-100 px-4 sm:mx-0 sm:mb-4 sm:px-0">
         {tabs.map(([k, label]) => (
           <button
             key={k}

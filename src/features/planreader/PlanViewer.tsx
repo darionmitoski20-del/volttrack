@@ -358,7 +358,7 @@ export function PlanViewer({
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_300px]">
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Select aria-label="Sheet" value={sheet.number} onChange={(e) => setSheetNo(e.target.value)} className="max-w-xs">
+          <Select aria-label="Sheet" value={sheet.number} onChange={(e) => setSheetNo(e.target.value)} className="w-full sm:max-w-xs">
             {sheets.map((s) => (
               <option key={s.number} value={s.number}>
                 {s.number} · {s.discipline} · {s.floor}
@@ -373,7 +373,7 @@ export function PlanViewer({
               <input type="checkbox" checked={showRoutes} onChange={(e) => setShowRoutes(e.target.checked)} /> Show routes
             </label>
           )}
-          <span className="flex items-center gap-3 text-xs text-ink-muted">
+          <span className="hidden items-center gap-3 text-xs text-ink-muted sm:flex">
             <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: OPEN }} />Not done</span>
             <span className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded-full" style={{ background: DONE }} />Done</span>
           </span>
@@ -381,7 +381,7 @@ export function PlanViewer({
 
         <div
           ref={vpRef}
-          className="relative h-[62vh] touch-none select-none overflow-hidden rounded-xl border border-navy-100 bg-white lg:h-[calc(100vh-230px)]"
+          className="relative h-[calc(100dvh-300px)] min-h-[360px] touch-none select-none overflow-hidden rounded-xl border border-navy-100 bg-white lg:h-[calc(100vh-230px)]"
           style={{ cursor: tool === 'pan' ? 'grab' : tool === 'erase' ? 'pointer' : 'crosshair' }}
           onPointerDown={onDown}
           onPointerMove={onMove}
