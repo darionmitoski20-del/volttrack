@@ -157,7 +157,6 @@ export function AiTab({ jobSiteId, versionId, isOwner }: { jobSiteId: string; ve
 
 function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; versionId: string; onDone: () => void }) {
   const { companyId } = useCompanyContext();
-  const { showToast } = useToast();
   const [doc, setDoc] = useState<unknown>(null);
   const [cands, setCands] = useState<PageCandidate[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
