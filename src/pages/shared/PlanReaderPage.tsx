@@ -23,7 +23,7 @@ import { AiTab } from '@/features/planreader/AiTab';
 import { AiReportPanel, useReportRow } from '@/features/planreader/AiReport';
 import { openPdf, startAiReport } from '@/features/planreader/ai';
 import { uploadPlan } from '@/features/planreader/service';
-import { CLASSES, UNCERTAIN } from '@/features/planreader/engine';
+import { CLASSES, UNCERTAIN, sameSymbol } from '@/features/planreader/engine';
 import { DISCIPLINE_ORDER, isCountable, roomLabel } from '@/features/planreader/labels';
 
 type Tab = 'plan' | 'overview' | 'rooms' | 'daily' | 'legend' | 'revisions' | 'review';
@@ -548,6 +548,7 @@ function ReviewTab({ jobSiteId, plan }: { jobSiteId: string; plan: PlanData }) {
   const teach = useTeachSymbol(jobSiteId);
   const { showToast } = useToast();
   const [pick, setPick] = useState<Record<string, string>>({});
+  const [names, setNames] = useState<Record<string, string>>({});
   const uncertain = useMemo(() => {
     const m = new Map<string, { n: number; sheets: Set<string> }>();
     for (const i of plan.items) {
@@ -567,40 +568,61 @@ function ReviewTab({ jobSiteId, plan }: { jobSiteId: string; plan: PlanData }) {
           <h2 className="mb-1 text-sm font-semibold text-ink">Unknown symbols</h2>
           <p className="mb-3 text-sm text-ink-muted">Tell Plan Reader what each symbol is. It remembers it for all future plans of your company.</p>
           <QueryBoundary query={unknown} isEmpty={(d) => d.length === 0} empty={<p className="text-sm text-ink-subtle">All symbols were recognized.</p>}>
-            {(list) => (
-              <ul className="divide-y divide-navy-100">
-                {list.map((u) => (
-                  <li key={u.id} className="flex flex-wrap items-center gap-3 py-3">
-                    {u.crop && <img src={u.crop} alt="symbol" className="max-h-24 rounded border border-navy-100 bg-white" style={{ imageRendering: 'pixelated' }} />}
-                    <div className="text-sm">
-                      <p className="text-ink">{u.sheet}</p>
-                      <p className="text-ink-muted">{roomLabel(u.room)}</p>
-                    </div>
-                    <div className="ml-auto flex gap-2">
-                      <Select aria-label="What is this symbol" value={pick[u.id] ?? ''} onChange={(e) => setPick((p) => ({ ...p, [u.id]: e.target.value }))}>
-                        <option value="">What is this?</option>
-                        {Object.entries(CLASSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                        <option value="IGN">Not a device (ignore)</option>
-                      </Select>
-                      <Button
-                        variant="primary"
-                        disabled={!pick[u.id]}
-                        loading={teach.isPending}
-                        onClick={async () => {
-                          try {
-                            await teach.mutateAsync({ id: u.id, cls: pick[u.id]!, grp: u.grp, dims: u.dims, feat: u.feat });
-                          } catch (e) {
-                            showToast('Could not save', errorMessage(e, 'Try again.'));
-                          }
-                        }}
-                      >
-                        Save
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {(list) => {
+              // the same symbol drawn many times is one question: name it once and all of them count
+              const groups: { first: (typeof list)[number]; ids: string[]; sheets: Set<string> }[] = [];
+              for (const u of list) {
+                const g = groups.find((x) => sameSymbol(x.first, u));
+                if (g) { g.ids.push(u.id); g.sheets.add(u.sheet); } else groups.push({ first: u, ids: [u.id], sheets: new Set([u.sheet]) });
+              }
+              groups.sort((a, b) => b.ids.length - a.ids.length);
+              return (
+                <>
+                  <p className="mb-2 text-xs text-ink-muted">{list.length} symbols, {groups.length} different kinds. Name each kind once.</p>
+                  <ul className="divide-y divide-navy-100">
+                    {groups.map(({ first: u, ids, sheets }) => {
+                      const v = pick[u.id] ?? '';
+                      const custom = v === '__other';
+                      return (
+                        <li key={u.id} className="flex flex-wrap items-center gap-3 py-3">
+                          {u.crop && <img src={u.crop} alt="symbol" className="max-h-24 rounded border border-navy-100 bg-white" style={{ imageRendering: 'pixelated' }} />}
+                          <div className="text-sm">
+                            <p className="font-semibold text-ink">×{ids.length}</p>
+                            <p className="text-ink-muted">{[...sheets].join(', ')}</p>
+                          </div>
+                          <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
+                            <Select aria-label="What is this symbol" value={v} onChange={(e) => setPick((p) => ({ ...p, [u.id]: e.target.value }))} className="min-w-0 flex-1 sm:w-56 sm:flex-none">
+                              <option value="">What is this?</option>
+                              {Object.entries(CLASSES).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+                              <option value="__other">Other (type the name)…</option>
+                              <option value="IGN">Not a device (ignore)</option>
+                            </Select>
+                            {custom && (
+                              <Input aria-label="Device name" placeholder="e.g. Floor box" value={names[u.id] ?? ''} onChange={(e) => setNames((p) => ({ ...p, [u.id]: e.target.value }))} className="min-w-0 flex-1 sm:w-44 sm:flex-none" />
+                            )}
+                            <Button
+                              variant="primary"
+                              disabled={!v || (custom && !(names[u.id] ?? '').trim())}
+                              loading={teach.isPending}
+                              onClick={async () => {
+                                const cls = custom ? (names[u.id] ?? '').trim().slice(0, 40) : v;
+                                try {
+                                  await teach.mutateAsync({ ids, cls, grp: u.grp, dims: u.dims, feat: u.feat });
+                                } catch (e) {
+                                  showToast('Could not save', errorMessage(e, 'Try again.'));
+                                }
+                              }}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              );
+            }}
           </QueryBoundary>
         </CardBody>
       </Card>

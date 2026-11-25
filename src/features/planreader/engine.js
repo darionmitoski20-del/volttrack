@@ -26,7 +26,7 @@ export const UNCERTAIN = ['RECT', 'EQ', 'EXIT'];
 
 export function className(cls) {
   const ex = cls.endsWith('_E'), base = ex ? cls.slice(0, -2) : cls;
-  let n = /^L\d+$/.test(base) ? `Light fixture ${base}` : /^EM\d+$/.test(base) ? `Emergency light ${base}` : (CLASSES[base] || base);
+  let n = /^FX-/.test(base) ? `Light fixture ${base.slice(3)}` : /^L\d+$/.test(base) ? `Light fixture ${base}` : /^EM\d+$/.test(base) ? `Emergency light ${base}` : (CLASSES[base] || base);
   return n + (ex ? ' (existing)' : '');
 }
 
@@ -39,11 +39,12 @@ const SHEETNO_RE = /^(E|FA|EL|EP|ES|T)(\d{1,2}\.\d{1,2}|[-.]\d{1,3}(\.\d{1,2})?|
 // Cover / index sheets list every plan title in their drawing list — they are not plans.
 const INDEX_RE = /\b(DRAWING (LIST|INDEX|SCHEDULE)|SHEET INDEX|LIST OF DRAWINGS|INDEX OF DRAWINGS)\b/;
 const LAYER_GROUPS = {
-  'Power': [['pwr', /^E-New-Powr-Wall$/]],
-  // tel: telecom layer (T-New-Eqpm-Symb …) — data outlets drawn as triangles
-  'Low voltage': [['lv', /^E-(New-Powr-Wall|Wall-Powr-Neww)$/], ['tel', /^T-(?!.*(Anno|Labl|Text|Note|Exst|Exist|Demo))/i]],
+  // Dunellen style names, and the standard (AIA / NCS) names: E-POWR-N, E-POWR-DEVC, T-DEVICE-N, E-FIRE-N …
+  'Power': [['pwr', /^E-(New-Powr-Wall|POWR-(N|NEW|DEVC(-N)?|DEVICE(-N)?|WALL(-N)?|JBOX(-N)?|EQPM(-N)?))$/i]],
+  // tel: telecom layer (T-New-Eqpm-Symb, T-DEVICE-N …) — data outlets drawn as triangles
+  'Low voltage': [['lv', /^E-(New-Powr-Wall|Wall-Powr-Neww)$/], ['tel', /^T-(?!.*(Anno|Labl|Text|Note|Iden|Exst|Exist|-E$|-D$|Demo))/i]],
   'Lighting': [['emer', /Lite-Emer$/]],
-  'Fire alarm': [['init', /FA-Initiating/], ['notif', /FA-Notification/]],
+  'Fire alarm': [['init', /FA-Initiating|^E-FIRE(-N)?$|^FA-(DEVC|DEVICE|EQPM)(-N)?$/i], ['notif', /FA-Notification/]],
 };
 const ROTATE = new Set(['pwr', 'emer', 'lv']);
 const TEXT_TAGS = { 'Lighting': [/^L\d$/, /^EM\d$/, /^(OS|VS|DS|RC|D)$/], 'Low voltage': [/^(SP|WAP|EPB|DH)$/] };
@@ -99,13 +100,21 @@ function receptacleSides(f) {
   const lo = 1, hi = 7, a = 13, b = 27;
   return [band(lo, hi, a, b), band(S - hi, S - lo, a, b), band(a, b, lo, hi), band(a, b, S - hi, S - lo)].filter(v => v >= 3).length;
 }
+/** Two unknown symbols look the same (same layer group, size within 4 px, shape alike in any rotation). */
+export function sameSymbol(a, b) {
+  if (!a.grp || a.grp !== b.grp || !a.dims || !b.dims || !a.feat || !b.feat) return false;
+  if (Math.abs(a.dims[0] - b.dims[0]) > 4 || Math.abs(a.dims[1] - b.dims[1]) > 4) return false;
+  return sim(hex2f(a.feat), hex2f(b.feat), true) >= 0.72;
+}
+
 export class Library {
   constructor(json) {
     this.json = json;
     this.entries = json.entries.map(e => ({ g: e.g, cls: e.cls, dims: e.dims, f: hex2f(e.f) }));
     this.pf = { P: hex2f(json.pf.P), F: hex2f(json.pf.F) };
   }
-  add(g, cls, dims, fhex) { this.json.entries.push({ g, cls, dims, f: fhex }); this.entries.push({ g, cls, dims, f: hex2f(fhex) }); }
+  // taught: a symbol this company named in Review (its own drawings), so no Dunellen-specific rules apply to it
+  add(g, cls, dims, fhex) { this.json.entries.push({ g, cls, dims, f: fhex }); this.entries.push({ g, cls, dims, f: hex2f(fhex), taught: true }); }
   classify(g, f, dims) {
     let best = [0, null];
     for (const e of this.entries) {
@@ -316,14 +325,20 @@ export function triangleKind(f) {
   return { n: t.n, filled: n / (0.5 * bw * bh) > 0.97 };
 }
 
-async function detectSymbols(lib, pdfDoc, page, sheet, names) {
+async function detectSymbols(lib, pdfDoc, page, sheet, names, also = []) {
   const items = [];
-  for (const [g, pat] of LAYER_GROUPS[sheet.discipline] || []) {
+  // also: disciplines that have no plan sheets of their own (e.g. fire alarm drawn on the power plan)
+  for (const [g, pat] of [sheet.discipline, ...also].flatMap(d => LAYER_GROUPS[d] || [])) {
     const L = new Set(names.filter(n => !n.includes('|') && pat.test(n)));
     if (!L.size) continue;
     const cfg = await layerConfig(pdfDoc, n => L.has(n));
     const { gray, W, H } = await renderGray(page, K, cfg);
-    for (const c of detectComponents(gray, W, H, sheet.width)) {
+    const comps = detectComponents(gray, W, H, sheet.width);
+    // A drawing set made with other symbols than the built-in library: matches are only "sort of" alike.
+    // Then the built-in shapes are not trusted (the owner names them once in Review); taught ones still count.
+    const scores = comps.map(c => lib.classify(g, c.f, c.dims)[0]).filter(v => v >= 0.6).sort((a, b) => a - b);
+    const foreign = scores.length >= 5 && scores[scores.length >> 1] < 0.8;
+    for (const c of comps) {
       const cx = (c.x + c.w / 2) / K, cy = (c.y + c.h / 2) / K;
       if (g === 'tel') { // only triangles count; the rest of the telecom layer (arrows, tags) is ignored
         const t = triangleKind(c.f);
@@ -339,8 +354,8 @@ async function detectSymbols(lib, pdfDoc, page, sheet, names) {
       }
       if (g === 'emer') { if (c.dims[1] / Math.max(1, c.dims[0]) > 2.3 && c.dims[0] < 12) items.push({ cls: 'EXIT', x: cx, y: cy, conf: 0.9, src: 'symbol' }); continue; }
       const [s, e] = lib.classify(g, c.f, c.dims);
-      if (s < 0.6) { if (c.w * c.h > 150) items.push({ cls: 'UNKNOWN', x: cx, y: cy, conf: +s.toFixed(2), src: 'symbol', group: g, dims: c.dims, feat: f2hex(c.f), crop: cropPng(gray, W, H, c) }); continue; }
-      const recept = e.cls.length === 1 && (e.cls[0] === 'DUP' || e.cls[0] === 'QUAD');
+      if (s < 0.6 || (foreign && !e.taught && s < 0.86)) { if (c.w * c.h > 150) items.push({ cls: 'UNKNOWN', x: cx, y: cy, conf: +s.toFixed(2), src: 'symbol', group: g, dims: c.dims, feat: f2hex(c.f), crop: cropPng(gray, W, H, c) }); continue; }
+      const recept = !e.taught && e.cls.length === 1 && (e.cls[0] === 'DUP' || e.cls[0] === 'QUAD');
       for (let cls of e.cls) {
         if (recept && c.dims[1] >= 26 && c.dims[1] <= 33) cls = c.dims[0] >= 23 ? 'QUAD' : 'DUP';  // quad е поширок (24-25 px наспроти 20-21)
         if (cls === 'PF') cls = sim(lib.pf.P, c.f, false) >= sim(lib.pf.F, c.f, false) ? 'P' : 'F';
@@ -356,14 +371,93 @@ async function detectSymbols(lib, pdfDoc, page, sheet, names) {
   return items.filter(i => i.cls !== 'GFCI_TAG' && i.cls !== 'IGN');
 }
 
-function detectText(W, sheet) {
-  const pats = TEXT_TAGS[sheet.discipline]; if (!pats) return [];
+// ------------------------------------------------------------------ легенда: ознаки од самиот план
+// Tags the drawing set defines itself (HD = hand dryer, SP = PA speaker, ZC = zone controller…), read from
+// the legend / symbol sheets by position: a short tag with its description to the right, on the same line or
+// centred on a multi-line description. Modifiers and notation (TR, WP, AFF…) are not devices.
+const TAG_RE = /^[A-Z]{1,4}\d{0,2}$/;
+const NOT_DEVICE = new Set(['TR', 'WP', 'GFCI', 'GFI', 'UP', 'DN', 'AFF', 'NL', 'EX', 'E', 'R', 'RL', 'RR', 'N', 'NIC', 'EC', 'GC', 'MC', 'TYP', 'TYPE',
+  'MIN', 'MAX', 'AC', 'DC', 'V', 'A', 'W', 'KW', 'KVA', 'HP', 'PH', 'CKT', 'NO', 'NC', 'IG', 'USB', 'AV', 'NTS', 'SIM', 'EQ', 'ABV', 'BLW', 'EXIST', 'NEW',
+  'TO', 'OR', 'AND', 'OF', 'IN', 'ON', 'AT', 'BY', 'FOR', 'THE', 'ALL', 'SEE', 'NOTE', 'NOTES', 'PLAN', 'ROOM', 'WALL', 'ROOF', 'LOW', 'HIGH',
+  'MECH', 'BOYS', 'GIRLS', 'WORK', 'AREA', 'DOOR', 'FLOOR', 'LINE', 'MAIN', 'UNIT', 'BOX', 'HAND', 'CARD', 'WATT', 'LOAD', 'AMPS', 'INTO', 'FROM',
+  'WITH', 'WILL', 'TWO', 'ONE', 'ANY', 'MAY', 'ONLY', 'ALSO', 'EACH', 'BE', 'IS', 'AS', 'AN', 'IF', 'NOT', 'PER', 'USE', 'END', 'TOP', 'BACK', 'FACE',
+  'EM', 'TYP', 'FA', 'LV', 'LTG', 'PNL', 'BRKR', 'GWB', 'ACT', 'CMU', 'MEP', 'FT', 'SF', 'OC', 'UNO', 'UON', 'VIF', 'ETR', 'NEC', 'SLD', 'X', 'Y', 'Z', 'O', 'S', 'T', 'U', 'K', 'B', 'C', 'G', 'H', 'I', 'L', 'Q']);
+const LEGEND_PAGE = /\b(LEGEND|SYMBOLS?|SYMBOL LIST|DEVICES)\b/;
+
+export function legendTags(W, widthPt) {
+  const out = {};
+  const mid = w => (w[1] + w[3]) / 2;
+  for (const w of W) {
+    const tag = w[4];
+    if (!TAG_RE.test(tag) || NOT_DEVICE.has(tag) || w[0] > widthPt - 230) continue;
+    // start of an entry: nothing written just left of it on the same line
+    if (W.some(t => t !== w && Math.abs(mid(t) - mid(w)) < 2.5 && t[2] <= w[0] && w[0] - t[2] < 15)) continue;
+    // description: words to the right, on the same line or a line centred near the tag
+    const cand = W.filter(t => t !== w && t[0] > w[2] && t[0] - w[2] < 140 && Math.abs(mid(t) - mid(w)) < 14);
+    if (!cand.length) continue;
+    const firstX = Math.min(...cand.map(t => t[0]));
+    const starters = cand.filter(t => t[0] - firstX < 6).sort((a, b) => Math.abs(mid(a) - mid(w)) - Math.abs(mid(b) - mid(w)));
+    const y = mid(starters[0]);
+    const line = W.filter(t => Math.abs(mid(t) - y) < 2.5 && t[0] >= firstX - 1).sort((a, b) => a[0] - b[0]);
+    const words = [];
+    for (const t of line) { if (words.length && t[0] - words[words.length - 1][2] > 25) break; words.push(t); }
+    let text = words.map(t => t[4]).join(' ').replace(/^[=#:–-]+\s*/, '').replace(/^(NEW|EXISTING)\s+/i, '');
+    text = text.split(/\s[-–]\s|\.\s|\s\(|,\s(?:CONTRACTOR|PROVIDE|SEE|COORDINATE|MOUNTED)/)[0].trim();
+    // a usable name: real words, not "REFER TO…", "STOPPER -STOPPER" or "(WITH HATCH)…"
+    const wordsOk = [...new Set((text.match(/[A-Za-z]{3,}/g) || []).map(x => x.toUpperCase()))];
+    const good = wordsOk.length >= 2 && !/^(REFER|SEE|AND|OR|OF|TO|THE|WITH|FOR|ON|AT|IN|\()/i.test(text) && text.length <= 50;
+    // without a usable name only short codes count (PC, ZC, LV1) — a plain word like KEY or MAIL is not a device tag
+    if (!good && !(tag in out) && tag.length >= 3 && !/\d/.test(tag)) continue;
+    if (!(tag in out) || (good && text.length > (out[tag] || '').length)) out[tag] = good ? text : (out[tag] || '');
+  }
+  return out;
+}
+
+// Fixture types from the lighting fixture schedule (TYPE / TAG / MARK column): A, B, L1, F2a …
+export function fixtureTypes(W) {
+  const mid = w => (w[1] + w[3]) / 2, out = new Set();
+  const sameLine = (a, b, d) => Math.abs(mid(a) - mid(b)) < 3 && Math.abs(a[0] - b[2]) < d;
+  const titles = W.filter(w => /FIXTURE|LUMINAIRE/.test(w[4]) && W.some(t => /SCHEDULE/.test(t[4]) && sameLine(t, w, 120))
+    && (/LUMINAIRE/.test(w[4]) || W.some(t => /LIGHTING/.test(t[4]) && sameLine(w, t, 40))));
+  for (const ti of titles) {
+    const heads = W.filter(h => /^(TYPE|TAG|MARK|TAG\/SYMBOL|SYMBOL)$/.test(h[4]) && h[1] > ti[1] && h[1] - ti[1] < 90 && Math.abs(h[0] - ti[0]) < 650);
+    const head = heads.sort((a, b) => a[0] - b[0])[0];
+    if (!head) continue;
+    const cx0 = head[0] - 18, cx1 = head[2] + 18;
+    for (const w of W) {
+      if (w[1] <= head[3] || w[1] - head[3] > 450) continue;
+      const cx = (w[0] + w[2]) / 2;
+      if (cx < cx0 || cx > cx1) continue;
+      if (/^[A-Z]{1,2}\d{0,2}[A-Za-z]?$/.test(w[4]) && !/^(TYPE|TAG|NA|NO|EM)$/.test(w[4])) out.add(w[4]);
+    }
+  }
+  return out;
+}
+
+const titleCase = s => s.toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase()).replace(/\b(Pa|Av|Tv|Led|Ups|Gfci|Ac)\b/g, m => m.toUpperCase());
+
+function detectText(W, sheet, legend = {}, fixtures = new Set()) {
+  const pats = TEXT_TAGS[sheet.discipline] ?? [], extra = Object.keys(legend);
+  const fx = sheet.discipline === 'Lighting' ? fixtures : new Set();
+  if (!pats.length && !extra.length && !fx.size) return [];
   const sent = /^[A-Za-z][a-z/,.\-]{2,}/, out = [];
   for (const [x0, y0, x1, y1, w] of W) {
-    if (x0 > sheet.width - 230 || !pats.some(p => p.test(w))) continue;
-    if (W.some(t => Math.abs(t[1] - y0) < 3 && Math.abs(t[0] - x1) < 12 && t[4] !== w && sent.test(t[4]))) continue;
-    if (W.some(t => Math.abs(t[1] - y0) < 3 && Math.abs(x0 - t[2]) < 12 && sent.test(t[4]))) continue;
-    out.push({ cls: w, x: (x0 + x1) / 2, y: (y0 + y1) / 2, conf: 1, src: 'text' });
+    if (x0 > sheet.width - 230) continue;
+    if (!fx.has(w) && pats.some(p => p.test(w))) {
+      if (W.some(t => Math.abs(t[1] - y0) < 3 && Math.abs(t[0] - x1) < 12 && t[4] !== w && sent.test(t[4]))) continue;
+      if (W.some(t => Math.abs(t[1] - y0) < 3 && Math.abs(x0 - t[2]) < 12 && sent.test(t[4]))) continue;
+      out.push({ cls: w, x: (x0 + x1) / 2, y: (y0 + y1) / 2, conf: 1, src: 'text' });
+    } else if (fx.has(w)) {
+      // a fixture type label from the schedule (A, B, X…): stands alone, not on the border
+      if (x0 < 60 || y0 < 60 || y1 > sheet.height - 60) continue;
+      if (W.some(t => t[4] !== w && Math.abs(t[1] - y0) < 3 && (Math.abs(t[0] - x1) < 10 || Math.abs(x0 - t[2]) < 10))) continue;
+      out.push({ cls: `FX-${w}`, x: (x0 + x1) / 2, y: (y0 + y1) / 2, conf: 0.9, src: 'text' });
+    } else if (Object.prototype.hasOwnProperty.call(legend, w)) {
+      // a tag from the legend: must stand alone (a label by a symbol, not a word in a note) and not on the sheet border
+      if (x0 < 60 || y0 < 60 || y1 > sheet.height - 60) continue;
+      if (W.some(t => t[4] !== w && Math.abs(t[1] - y0) < 3 && (Math.abs(t[0] - x1) < 10 || Math.abs(x0 - t[2]) < 10))) continue;
+      out.push({ cls: w, x: (x0 + x1) / 2, y: (y0 + y1) / 2, conf: 0.9, src: 'legend', legend: legend[w] || `${w} (see legend)` });
+    }
   }
   return out;
 }
@@ -427,7 +521,7 @@ function wallBinary(gray, W, H) { const b = new Uint8Array(W * H); for (let i = 
 
 // ------------------------------------------------------------------ главно
 export async function findSheets(pdfDoc, progress) {
-  const sheets = [];
+  const sheets = [], legend = {}, fixtures = new Set();
   for (let pg = 1; pg <= pdfDoc.numPages; pg++) {
     progress && progress(`Looking for plan sheets… ${pg}/${pdfDoc.numPages}`, 2 + 18 * pg / pdfDoc.numPages);
     const page = await pdfDoc.getPage(pg), W = await pageWords(page), titles = [];
@@ -436,7 +530,14 @@ export async function findSheets(pdfDoc, progress) {
       for (const m of L.matchAll(TITLE_RE)) { const pre = L.slice(Math.max(0, m.index - 40), m.index); if (SKIP_RE.test(pre + m[0])) continue; titles.push(m); }
     }
     const isIndex = [...lines(W), ...W.raw].some(l => INDEX_RE.test(l.toUpperCase().replace(/\s+/g, ' ')));
-    if (isIndex || !titles.length || new Set(titles.map(t => t[0])).size > 2) { page.cleanup(); continue; }
+    if (isIndex || !titles.length || new Set(titles.map(t => t[0])).size > 2) {
+      // not a plan: a legend / symbol sheet of the electrical set teaches the tags it defines
+      const wPt = page.getViewport({ scale: 1 }).width;
+      const electrical = W.some(w => w[0] > wPt - 230 && SHEETNO_RE.test(w[4]) && w[3] - w[1] >= 8); // E/FA/T number in the title block
+      if (electrical && W.raw.some(l => LEGEND_PAGE.test(l.toUpperCase()))) Object.assign(legend, legendTags(W, wPt));
+      if (electrical) for (const t of fixtureTypes(W)) fixtures.add(t);
+      page.cleanup(); continue;
+    }
     const m = titles[0], disc = DISCIPLINES.find(([re]) => re.test(m[2]))[1], [floor, level] = FLOORS[m[1]];
     const nums = W.filter(w => SHEETNO_RE.test(w[4]));
     const number = nums.length ? nums.reduce((a, b) => (b[3] - b[1] > a[3] - a[1] ? b : a))[4] : `p.${pg}`;
@@ -445,7 +546,14 @@ export async function findSheets(pdfDoc, progress) {
     sheets.push({ page: pg, number, title: m[0], discipline: disc, floor, level, width: vp.width, height: vp.height });
     page.cleanup();
   }
-  const seen = new Set(); return sheets.filter(s => !seen.has(s.number) && seen.add(s.number));
+  const seen = new Set(), out = sheets.filter(s => !seen.has(s.number) && seen.add(s.number));
+  // tags handled elsewhere (symbols or the built-in list) are not taken from the legend
+  for (const k of Object.keys(legend)) if (CLASSES[k] || /^(L|EM)\d+$/.test(k)) delete legend[k];
+  // fixture types the built-in list already reads (L1…, EM1…) stay as they are
+  for (const t of [...fixtures]) { if (/^(L|EM)\d+$/.test(t)) fixtures.delete(t); delete legend[t]; }
+  out.legend = legend;
+  out.fixtures = fixtures;
+  return out;
 }
 
 export async function readPlan(pdfjsLib, data, libJson, progress = () => { }, imageScale = 1) {
@@ -456,15 +564,24 @@ export async function readPlan(pdfjsLib, data, libJson, progress = () => { }, im
   const sheets = await findSheets(pdfDoc, progress);
   if (!sheets.length) throw new Error('No plan sheets found (POWER / LIGHTING / LOW VOLTAGE / FIRE ALARM PLAN).');
   let items = []; const ref = {}, words = {};
+  const by0 = num => sheets.find(s => s.number === num)?.discipline ?? '';
+  // per floor: low voltage / fire alarm devices drawn on the power plan when the set has no sheet for them
+  const missingOn = fl => ['Low voltage', 'Fire alarm'].filter(d => !sheets.some(s => s.floor === fl && s.discipline === d));
   for (const [k, sh] of sheets.entries()) {
     progress(`Reading ${sh.number} (${sh.discipline}, ${sh.floor})…`, 20 + 65 * k / sheets.length);
     const page = await pdfDoc.getPage(sh.page), W = await pageWords(page); words[sh.number] = W;
-    const found = [...await detectSymbols(lib, pdfDoc, page, sh, names), ...detectText(W, sh)];
+    const also = sh.discipline === 'Power' ? missingOn(sh.floor) : [];
+    const found = [...await detectSymbols(lib, pdfDoc, page, sh, names, also), ...detectText(W, sh, sheets.legend, sheets.fixtures)];
     found.forEach(i => i.sheet = sh.number); items.push(...found);
     sh.image = await renderJpeg(page, imageScale);
     const cur = ref[sh.floor]; if (!cur || (sh.discipline === 'Fire alarm' && cur.discipline !== 'Fire alarm')) ref[sh.floor] = sh;
     page.cleanup();
   }
+  // a legend tag is counted on one kind of sheet only (the one that shows it most), so a device is not counted twice
+  const use = {};
+  for (const it of items) if (it.src === 'legend') { const d = by0(it.sheet); (use[it.cls] ??= {})[d] = (use[it.cls][d] ?? 0) + 1; }
+  const home = Object.fromEntries(Object.entries(use).map(([t, m]) => [t, Object.entries(m).sort((a, b) => b[1] - a[1])[0][0]]));
+  items = items.filter(it => it.src !== 'legend' || by0(it.sheet) === home[it.cls]);
   progress('Assigning devices to rooms…', 88);
   const refs = {}, walls = {};
   const wallsOf = async sh => {
@@ -486,7 +603,9 @@ export async function readPlan(pdfjsLib, data, libJson, progress = () => { }, im
     const sh = by[it.sheet], R = refs[sh.floor], r = R.lookup(it.x + sh.offset[0], it.y + sh.offset[1]);
     it.room = r != null && r >= 0 ? `${R.tags[r].num} ${R.tags[r].name}` : '';
     it.existing = it.cls.endsWith('_E');
-    it.name = it.cls === 'UNKNOWN' ? 'Unknown symbol' : className(it.cls);
+    it.name = it.cls === 'UNKNOWN' ? 'Unknown symbol' : it.legend ? (it.legend.endsWith('(see legend)') ? it.legend : `${titleCase(it.legend)} (${it.cls})`) : className(it.cls);
+    delete it.legend;
+    if (it.src === 'legend') it.src = 'text';
   }
   progress('Done', 100);
   await pdfDoc.loadingTask.destroy();

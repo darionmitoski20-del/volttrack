@@ -192,13 +192,14 @@ export function useTeachSymbol(jobSiteId: string) {
   const { companyId, userId } = useCompanyContext();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (i: { id: string; cls: string; grp: string | null; dims: number[] | null; feat: string | null }) => {
+    // ids: every symbol on the plan that looks like this one — they all get the same name at once
+    mutationFn: async (i: { ids: string[]; cls: string; grp: string | null; dims: number[] | null; feat: string | null }) => {
       if (i.cls === 'IGN') {
-        const { error } = await supabase.from('plan_items').update({ cls: 'IGN', name: 'Ignored' }).eq('id', i.id);
+        const { error } = await supabase.from('plan_items').update({ cls: 'IGN', name: 'Ignored' }).in('id', i.ids);
         if (error) throw error;
         return;
       }
-      const { error } = await supabase.from('plan_items').update({ cls: i.cls, name: className(i.cls), conf: 1 }).eq('id', i.id);
+      const { error } = await supabase.from('plan_items').update({ cls: i.cls, name: className(i.cls), conf: 1 }).in('id', i.ids);
       if (error) throw error;
       if (i.grp && i.dims && i.feat) {
         const r = await supabase.from('plan_symbols').insert({ company_id: companyId, grp: i.grp, cls: i.cls, dims: i.dims, feat: i.feat, created_by: userId });

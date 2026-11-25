@@ -34,6 +34,7 @@ export class Library {
   add(g: string, cls: string[], dims: number[], fhex: string): void;
 }
 export const CLASSES: Record<string, string>;
+export function sameSymbol(a: { grp: string | null; dims: number[] | null; feat: string | null }, b: { grp: string | null; dims: number[] | null; feat: string | null }): boolean;
 export const UNCERTAIN: string[];
 export function className(cls: string): string;
 export function readPlan(
