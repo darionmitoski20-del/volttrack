@@ -47,6 +47,7 @@ const LAYER_GROUPS = {
   'Fire alarm': [['init', /FA-Initiating|^E-FIRE(-N)?$|^FA-(DEVC|DEVICE|EQPM)(-N)?$/i], ['notif', /FA-Notification/]],
 };
 const ROTATE = new Set(['pwr', 'emer', 'lv']);
+const SURE = 0.85; // how alike a symbol must be to a known one to be counted without asking
 const TEXT_TAGS = { 'Lighting': [/^L\d$/, /^EM\d$/, /^(OS|VS|DS|RC|D)$/], 'Low voltage': [/^(SP|WAP|EPB|DH)$/] };
 const WALL = n => /^(A-WALL|A-GLAZ)/i.test(n.split('|').pop());
 
@@ -334,10 +335,6 @@ async function detectSymbols(lib, pdfDoc, page, sheet, names, also = []) {
     const cfg = await layerConfig(pdfDoc, n => L.has(n));
     const { gray, W, H } = await renderGray(page, K, cfg);
     const comps = detectComponents(gray, W, H, sheet.width);
-    // A drawing set made with other symbols than the built-in library: matches are only "sort of" alike.
-    // Then the built-in shapes are not trusted (the owner names them once in Review); taught ones still count.
-    const scores = comps.map(c => lib.classify(g, c.f, c.dims)[0]).filter(v => v >= 0.6).sort((a, b) => a - b);
-    const foreign = scores.length >= 5 && scores[scores.length >> 1] < 0.8;
     for (const c of comps) {
       const cx = (c.x + c.w / 2) / K, cy = (c.y + c.h / 2) / K;
       if (g === 'tel') { // only triangles count; the rest of the telecom layer (arrows, tags) is ignored
@@ -354,7 +351,9 @@ async function detectSymbols(lib, pdfDoc, page, sheet, names, also = []) {
       }
       if (g === 'emer') { if (c.dims[1] / Math.max(1, c.dims[0]) > 2.3 && c.dims[0] < 12) items.push({ cls: 'EXIT', x: cx, y: cy, conf: 0.9, src: 'symbol' }); continue; }
       const [s, e] = lib.classify(g, c.f, c.dims);
-      if (s < 0.6 || (foreign && !e.taught && s < 0.86)) { if (c.w * c.h > 150) items.push({ cls: 'UNKNOWN', x: cx, y: cy, conf: +s.toFixed(2), src: 'symbol', group: g, dims: c.dims, feat: f2hex(c.f), crop: cropPng(gray, W, H, c) }); continue; }
+      // a shape from another drawing set is used only when it is practically the same symbol;
+      // anything less is not guessed: it goes to Review, where the owner names it for this plan
+      if (s < SURE) { if (c.w * c.h > 150) items.push({ cls: 'UNKNOWN', x: cx, y: cy, conf: +s.toFixed(2), src: 'symbol', group: g, dims: c.dims, feat: f2hex(c.f), crop: cropPng(gray, W, H, c) }); continue; }
       const recept = !e.taught && e.cls.length === 1 && (e.cls[0] === 'DUP' || e.cls[0] === 'QUAD');
       for (let cls of e.cls) {
         if (recept && c.dims[1] >= 26 && c.dims[1] <= 33) cls = c.dims[0] >= 23 ? 'QUAD' : 'DUP';  // quad е поширок (24-25 px наспроти 20-21)
