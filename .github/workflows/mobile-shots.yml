@@ -1,0 +1,24 @@
+name: Mobile screenshots
+on:
+  workflow_dispatch:
+  push:
+    branches: ['shots/**']
+permissions:
+  contents: read
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm i --no-save playwright@1 && npx playwright install --with-deps chromium
+      - run: node scripts/mobile-shots.mjs
+        env:
+          BASE: ${{ vars.SHOTS_BASE || 'https://darionmitoski20-del.github.io/volttrack' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots
+          path: shots
