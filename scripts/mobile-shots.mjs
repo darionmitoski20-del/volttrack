@@ -37,7 +37,7 @@ async function shot(page, tag) {
   await page.waitForTimeout(2500);
   const o = await overflow(page);
   report.push({ tag, ...o });
-  await page.screenshot({ path: `shots/${tag}.png`, fullPage: true });
+  await page.screenshot({ path: `shots/${tag}.jpg`, fullPage: true, type: 'jpeg', quality: 60 });
 }
 
 for (const dev of sizes) {

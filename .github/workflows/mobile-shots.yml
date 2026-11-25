@@ -4,7 +4,7 @@ on:
   push:
     branches: ['shots/**']
 permissions:
-  contents: read
+  contents: write
 jobs:
   shots:
     runs-on: ubuntu-latest
@@ -17,8 +17,13 @@ jobs:
       - run: node scripts/mobile-shots.mjs
         env:
           BASE: ${{ vars.SHOTS_BASE || 'https://darionmitoski20-del.github.io/volttrack' }}
-      - uses: actions/upload-artifact@v4
+      - name: Push screenshots to the shots-out branch
         if: always()
-        with:
-          name: shots
-          path: shots
+        run: |
+          cd shots
+          git init -q -b shots-out
+          git config user.name "shots-bot"
+          git config user.email "shots-bot@users.noreply.github.com"
+          git add -A
+          git commit -qm "screenshots ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" shots-out
