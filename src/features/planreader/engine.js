@@ -11,7 +11,7 @@ export let NORM_T = 15; export function setNormT(v) { NORM_T = v; }
 export const CLASSES = {
   DUP: 'Duplex receptacle (TR)', QUAD: 'Quad receptacle', GFCI: 'GFCI receptacle',
   J: 'Junction box (J)', EQ: 'Equipment connection (VAV/mech.)', RECT: 'Disconnect / equipment',
-  DATA: 'Data outlet', EXIT: 'Exit sign',
+  DATA: 'Data outlet', TELDATA: 'Telephone data outlet (48")', EXIT: 'Exit sign',
   SS: 'Speaker/strobe – ceiling', SS_W: 'Speaker/strobe – wall', BS: 'Blue-lens strobe',
   SPK: 'Speaker – ceiling', SMK: 'Smoke detector', SMK_EL: 'Smoke detector – elevator lobby',
   SMK_DUCT: 'Duct smoke detector', HEAT: 'Heat detector', CO: 'CO detector',
@@ -40,7 +40,8 @@ const SHEETNO_RE = /^(E|FA|EL|EP|ES|T)(\d{1,2}\.\d{1,2}|[-.]\d{1,3}(\.\d{1,2})?|
 const INDEX_RE = /\b(DRAWING (LIST|INDEX|SCHEDULE)|SHEET INDEX|LIST OF DRAWINGS|INDEX OF DRAWINGS)\b/;
 const LAYER_GROUPS = {
   'Power': [['pwr', /^E-New-Powr-Wall$/]],
-  'Low voltage': [['lv', /^E-(New-Powr-Wall|Wall-Powr-Neww)$/]],
+  // tel: telecom layer (T-New-Eqpm-Symb …) — data outlets drawn as triangles
+  'Low voltage': [['lv', /^E-(New-Powr-Wall|Wall-Powr-Neww)$/], ['tel', /^T-(?!.*(Anno|Labl|Text|Note|Exst|Exist|Demo))/i]],
   'Lighting': [['emer', /Lite-Emer$/]],
   'Fire alarm': [['init', /FA-Initiating/], ['notif', /FA-Notification/]],
 };
@@ -281,6 +282,40 @@ function cropPng(gray, W, H, c, pad = 10) {
   ctx.putImageData(im, 0, 0); return cv.toDataURL('image/png');
 }
 
+// Data outlet triangle (△ ▽ ◁ ▷, hollow or half filled) in a 40x40 bitmap; also two tip to tip (▽△).
+// -> { n: 1 | 2, filled } or null. Works at any drawing scale: it looks at the shape, not the size.
+export function triangleKind(f) {
+  let r0 = S, r1 = -1, c0 = S, c1 = -1, n = 0;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (f[y * S + x]) { n++; if (y < r0) r0 = y; if (y > r1) r1 = y; if (x < c0) c0 = x; if (x > c1) c1 = x; }
+  if (n < 20) return null;
+  const bh = r1 - r0 + 1, bw = c1 - c0 + 1;
+  const at = (a, b, vert) => (vert ? f[a * S + b] : f[b * S + a]);
+  const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+  const mono = (arr, dir) => { let ok = 0; for (let i = 1; i < arr.length; i++) if ((arr[i] - arr[i - 1]) * dir >= -1) ok++; return ok / (arr.length - 1); };
+  const test = vert => {
+    const [a0, a1, b0, b1] = vert ? [r0, r1, c0, c1] : [c0, c1, r0, r1];
+    const len = a1 - a0 + 1, wid = b1 - b0 + 1, ext = [], run = [];
+    for (let a = a0; a <= a1; a++) {
+      let lo = -1, hi = -1, best = 0, cur = 0;
+      for (let b = b0; b <= b1; b++) { if (at(a, b, vert)) { if (lo < 0) lo = b; hi = b; cur++; best = Math.max(best, cur); } else cur = 0; }
+      ext.push(lo < 0 ? 0 : hi - lo + 1); run.push(best);
+    }
+    const mx = Math.max(...ext), k = Math.max(2, Math.round(len * 0.2));
+    const head = mean(ext.slice(0, k)), tail = mean(ext.slice(-k));
+    const baseHead = Math.max(...run.slice(0, 3)), baseTail = Math.max(...run.slice(-3)); // a straight base line
+    if (tail >= 0.8 * mx && head <= 0.45 * mx && mono(ext, 1) > 0.85 && baseTail >= 0.7 * wid) return { n: 1, len, wid };
+    if (head >= 0.8 * mx && tail <= 0.45 * mx && mono(ext, -1) > 0.85 && baseHead >= 0.7 * wid) return { n: 1, len, wid };
+    const mid = ext.slice(Math.floor(len / 3), Math.ceil(2 * len / 3));
+    if (len > 1.5 * wid && Math.min(...mid) <= 0.35 * mx && head >= 0.75 * mx && tail >= 0.75 * mx && baseHead >= 0.7 * wid && baseTail >= 0.7 * wid) return { n: 2, len, wid };
+    return null;
+  };
+  const t = test(true) ?? test(false);
+  if (!t) return null;
+  const aspect = t.len / t.wid / t.n;
+  if (aspect < 0.7 || aspect > 1.25) return null;
+  return { n: t.n, filled: n / (0.5 * bw * bh) > 0.97 };
+}
+
 async function detectSymbols(lib, pdfDoc, page, sheet, names) {
   const items = [];
   for (const [g, pat] of LAYER_GROUPS[sheet.discipline] || []) {
@@ -290,6 +325,18 @@ async function detectSymbols(lib, pdfDoc, page, sheet, names) {
     const { gray, W, H } = await renderGray(page, K, cfg);
     for (const c of detectComponents(gray, W, H, sheet.width)) {
       const cx = (c.x + c.w / 2) / K, cy = (c.y + c.h / 2) / K;
+      if (g === 'tel') { // only triangles count; the rest of the telecom layer (arrows, tags) is ignored
+        const t = triangleKind(c.f);
+        if (!t) continue;
+        const cls = t.filled ? 'TELDATA' : 'DATA';
+        if (t.n === 1) items.push({ cls, x: cx, y: cy, conf: 0.95, src: 'symbol' });
+        else {
+          const vert = c.h >= c.w, d = (vert ? c.h : c.w) / 4 / K;
+          items.push({ cls, x: cx - (vert ? 0 : d), y: cy - (vert ? d : 0), conf: 0.95, src: 'symbol' });
+          items.push({ cls, x: cx + (vert ? 0 : d), y: cy + (vert ? d : 0), conf: 0.95, src: 'symbol' });
+        }
+        continue;
+      }
       if (g === 'emer') { if (c.dims[1] / Math.max(1, c.dims[0]) > 2.3 && c.dims[0] < 12) items.push({ cls: 'EXIT', x: cx, y: cy, conf: 0.9, src: 'symbol' }); continue; }
       const [s, e] = lib.classify(g, c.f, c.dims);
       if (s < 0.6) { if (c.w * c.h > 150) items.push({ cls: 'UNKNOWN', x: cx, y: cy, conf: +s.toFixed(2), src: 'symbol', group: g, dims: c.dims, feat: f2hex(c.f), crop: cropPng(gray, W, H, c) }); continue; }

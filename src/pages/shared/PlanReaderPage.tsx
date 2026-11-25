@@ -131,7 +131,6 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
     setProg({ m: 'Starting…', p: 0 });
     try {
       const v = await uploadPlan({ file, jobSiteId, companyId, userId, onProgress: (m, p) => setProg({ m, p }) });
-      showToast('Plan read', `${v.sheet_count} sheets, ${v.item_count} devices`);
       qc.invalidateQueries({ queryKey: ['plan-current', jobSiteId] });
       qc.invalidateQueries({ queryKey: ['plan-versions', jobSiteId] });
 
@@ -149,7 +148,6 @@ function UploadBox({ jobSiteId, label }: { jobSiteId: string; label: string }) {
           doc,
           onProgress: (m, p) => setProg({ m, p: Math.round(p * 100) }),
         });
-        showToast('AI is reading the plan', 'The report appears on the Overview tab in a few minutes');
       } catch (aiErr) {
         const msg = errorMessage(aiErr, '');
         showToast(
@@ -586,7 +584,6 @@ function ReviewTab({ jobSiteId, plan }: { jobSiteId: string; plan: PlanData }) {
                         onClick={async () => {
                           try {
                             await teach.mutateAsync({ id: u.id, cls: pick[u.id]!, grp: u.grp, dims: u.dims, feat: u.feat });
-                            showToast('Saved', 'Plan Reader will recognize this symbol next time.');
                           } catch (e) {
                             showToast('Could not save', errorMessage(e, 'Try again.'));
                           }

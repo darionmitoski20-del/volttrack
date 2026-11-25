@@ -358,6 +358,21 @@ export interface PlanDrawing {
   created_at: string;
 }
 
+export interface PlanIssue {
+  id: string;
+  company_id: string;
+  job_site_id: string;
+  sheet: string;
+  x: number;
+  y: number;
+  note: string | null;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  fixed_by: string | null;
+  fixed_at: string | null;
+}
+
 export interface PlanAiPage {
   id: string;
   company_id: string;
@@ -462,6 +477,7 @@ export interface Database {
       plan_work: TableDef<PlanWork>;
       plan_symbols: TableDef<PlanSymbol>;
       plan_drawings: TableDef<PlanDrawing>;
+      plan_issues: TableDef<PlanIssue>;
       plan_ai_pages: TableDef<PlanAiPage>;
       plan_ai_questions: TableDef<PlanAiQuestion>;
       company_billing: TableDef<CompanyBilling>;

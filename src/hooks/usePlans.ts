@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useCompanyContext } from './useCompanyContext';
-import type { PlanDrawing, PlanItem, PlanSheet, PlanVersion } from '@/lib/database.types';
+import type { PlanDrawing, PlanIssue, PlanItem, PlanSheet, PlanVersion } from '@/lib/database.types';
 import { BUCKET } from '@/features/planreader/service';
 import { className } from '@/features/planreader/engine';
 
@@ -281,5 +281,65 @@ export function useDeleteDrawing(jobSiteId: string) {
       return id;
     },
     onSuccess: (id) => qc.setQueryData<PlanDrawing[]>(['plan-drawings', jobSiteId], (old) => (old ?? []).filter((d) => d.id !== id)),
+  });
+}
+
+// ---- problems marked on the plan (red circles) ---------------------------------------
+
+export type PlanIssueRow = PlanIssue & { author: { full_name: string } | null; fixer: { full_name: string } | null };
+
+export function usePlanIssues(jobSiteId: string) {
+  return useQuery({
+    queryKey: ['plan-issues', jobSiteId],
+    queryFn: async (): Promise<PlanIssueRow[]> => {
+      const { data, error } = await supabase
+        .from('plan_issues')
+        .select('*, author:profiles!plan_issues_created_by_fkey(full_name), fixer:profiles!plan_issues_fixed_by_fkey(full_name)')
+        .eq('job_site_id', jobSiteId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as PlanIssueRow[];
+    },
+  });
+}
+
+/** Anyone: mark a problem on the plan. */
+export function useAddIssue(jobSiteId: string) {
+  const { companyId, userId } = useCompanyContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (d: { sheet: string; x: number; y: number; note: string | null }) => {
+      const { error } = await supabase.from('plan_issues')
+        .insert({ company_id: companyId, job_site_id: jobSiteId, sheet: d.sheet, x: d.x, y: d.y, note: d.note, created_by: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan-issues'] }),
+  });
+}
+
+/** Anyone: mark a problem fixed (or open again). */
+export function useSetIssueStatus() {
+  const { userId } = useCompanyContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, fixed }: { id: string; fixed: boolean }) => {
+      const { error } = await supabase.from('plan_issues')
+        .update(fixed ? { status: 'fixed', fixed_by: userId, fixed_at: new Date().toISOString() } : { status: 'open', fixed_by: null, fixed_at: null })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan-issues'] }),
+  });
+}
+
+/** Owner or whoever added it: delete a problem. */
+export function useDeleteIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('plan_issues').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plan-issues'] }),
   });
 }

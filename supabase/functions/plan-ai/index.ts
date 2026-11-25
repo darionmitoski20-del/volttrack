@@ -74,7 +74,12 @@ other trades (mechanical, plumbing, etc.) are listed separately. Return ONLY a J
 }
 
 Rules: count only NEW electrical work shown on floor plans (not legends, schedules, existing-to-remain or demolition).
-Count every floor separately and every room on it. Low voltage / data belongs to electrical. Mechanical and plumbing
+Count every floor separately and every room on it. Low voltage / data belongs to electrical and is as important as power:
+read the low-voltage / communication / data / audio legend first and use it on every low-voltage plan (often E4.xx or T sheets).
+Data outlets are often small triangles (hollow = data outlet, half-filled = telephone/wall data outlet) with a number next to
+them = number of ports/cables; count every triangle and also sum the ports (put "ports: N" in the item name, e.g.
+"Data outlet (18\" AFF) - 2 ports"). Also count WAP, PA speakers/clocks (SP), door holders (DH), panic buttons (EPB),
+cameras, card readers, intercom, TV/AV outlets, floor boxes. Put all of them in the "Data & low voltage" category, per room. Mechanical and plumbing
 equipment that needs power is listed under other_trades with what the electrician must provide; flag equipment on M/P sheets
 that has no electrical connection on the E sheets. Keep texts short. Panels: every circuit in the schedules.`;
 

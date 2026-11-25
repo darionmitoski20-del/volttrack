@@ -19,7 +19,6 @@ import { QueryBoundary, EmptyState, SkeletonRows } from '@/components/ui/states'
 import { JobSiteFormModal } from '@/components/forms/JobSiteFormModal';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/form';
-import { useToast } from '@/components/ui/Toast';
 import { errorMessage } from '@/lib/supabase';
 import type { JobSite } from '@/lib/database.types';
 
@@ -217,7 +216,6 @@ function DeleteJobSiteModal({ open, onClose, site }: { open: boolean; onClose: (
   const del = useDeleteJobSite();
   const update = useUpdateJobSite();
   const navigate = useNavigate();
-  const { showToast } = useToast();
   const [hours, setHours] = useState<number | null>(null);
   const [typed, setTyped] = useState('');
   const [err, setErr] = useState('');
@@ -233,7 +231,6 @@ function DeleteJobSiteModal({ open, onClose, site }: { open: boolean; onClose: (
     setErr('');
     try {
       await del.mutateAsync({ id: site.id, deleteHours });
-      showToast('Job site deleted', site.name);
       close();
       navigate('/app/job-sites', { replace: true });
     } catch (e) {
@@ -259,7 +256,6 @@ function DeleteJobSiteModal({ open, onClose, site }: { open: boolean; onClose: (
         end_date: site.end_date,
         budget_amount: (site as JobSite & { budget_amount?: number | null }).budget_amount ?? null,
       } as never);
-      showToast('Job site archived', 'Hours are kept for payroll and reports');
       close();
     } catch (e) {
       setErr(errorMessage(e, 'Could not archive the job site.'));

@@ -315,6 +315,7 @@ function Scope({ text }: { text: string }) {
 
 function ElectricalView({ d, r }: { d: ReturnType<typeof shape>; r: AiReport }) {
   const { showToast } = useToast();
+  const [copied, setCopied] = useState(false);
   const [floorIdx, setFloorIdx] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const floor = d.floors[Math.min(floorIdx, Math.max(0, d.floors.length - 1))];
@@ -480,13 +481,14 @@ function ElectricalView({ d, r }: { d: ReturnType<typeof shape>; r: AiReport }) 
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(r.rfi!.map((q, i) => `${i + 1}. ${q}`).join('\n'));
-                showToast('Copied', 'Paste the questions into an email');
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
               } catch {
                 showToast('Could not copy', 'Select the text and copy it by hand');
               }
             }}
           >
-            Copy all
+            {copied ? 'Copied ✓' : 'Copy all'}
           </Button>
         </Section>
       )}

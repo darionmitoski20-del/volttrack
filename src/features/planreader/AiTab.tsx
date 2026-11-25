@@ -186,7 +186,7 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
     if (!doc || !cands) return;
     setErr(null);
     try {
-      const n = await readPagesWithAi({
+      await readPagesWithAi({
         doc,
         pages: cands.filter((c) => picked.has(c.page)).sort((a, b) => a.page - b.page),
         companyId,
@@ -194,7 +194,6 @@ function AiRunner({ jobSiteId, versionId, onDone }: { jobSiteId: string; version
         versionId,
         onProgress: (m, p) => setBusy({ m, p }),
       });
-      showToast('AI reading finished', `${n} page${n === 1 ? '' : 's'}`);
       setCands(null);
       onDone();
     } catch (e) {

@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Hand, MousePointer2, Plus, Maximize2, ZoomIn, ZoomOut, Check, X, Trash2, Pencil, Eraser, Undo2 } from 'lucide-react';
+import { Hand, MousePointer2, Plus, Maximize2, ZoomIn, ZoomOut, Check, X, Trash2, Pencil, Eraser, Undo2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/form';
+import { Select, Textarea } from '@/components/ui/form';
+import { useCompanyContext } from '@/hooks/useCompanyContext';
 import { useToast } from '@/components/ui/Toast';
 import { errorMessage } from '@/lib/supabase';
 import { formatDate, formatTime } from '@/lib/datetime';
 import type { PlanItem, PlanSheet } from '@/lib/database.types';
-import { useAddPlanItem, useDeletePlanItem, useMarkWork, usePlanDrawings, useAddDrawing, useDeleteDrawing, type WorkState } from '@/hooks/usePlans';
+import { useAddPlanItem, useDeletePlanItem, useMarkWork, usePlanDrawings, useAddDrawing, useDeleteDrawing, usePlanIssues, useAddIssue, useSetIssueStatus, useDeleteIssue, type PlanIssueRow, type WorkState } from '@/hooks/usePlans';
 import { CLASSES } from './engine';
 import { roomLabel, isCountable } from './labels';
 
-type Tool = 'pan' | 'select' | 'add' | 'draw' | 'erase';
+type Tool = 'pan' | 'select' | 'add' | 'draw' | 'erase' | 'issue';
+
+const ISSUE = '#dc2626';
 
 // Pencil colours for drawn routes.
 const PEN_COLORS = ['#dc2626', '#2563eb', '#16a34a', '#ea580c', '#9333ea', '#111827'];
@@ -55,6 +58,14 @@ export function PlanViewer({
   const [stroke, setStroke] = useState<number[] | null>(null);
   const [myStrokes, setMyStrokes] = useState<string[]>([]);
   const [showRoutes, setShowRoutes] = useState(true);
+  const { userId } = useCompanyContext();
+  const issuesQ = usePlanIssues(jobSiteId);
+  const addIssue = useAddIssue(jobSiteId);
+  const setIssue = useSetIssueStatus();
+  const delIssue = useDeleteIssue();
+  const [issueAt, setIssueAt] = useState<{ x: number; y: number } | null>(null);
+  const [issueNote, setIssueNote] = useState('');
+  const [issueTip, setIssueTip] = useState<{ issue: PlanIssueRow; x: number; y: number } | null>(null);
 
   const storageKey = `plan-sheet-${jobSiteId}`;
   const [sheetNo, setSheetNo] = useState<string>(() => {
@@ -81,6 +92,7 @@ export function PlanViewer({
     [drawingsQ.data, sheet],
   );
   const sheetItems = useMemo(() => items.filter((i) => i.sheet === sheet?.number), [items, sheet]);
+  const sheetIssues = useMemo(() => (issuesQ.data ?? []).filter((x) => x.sheet === sheet?.number), [issuesQ.data, sheet]);
   const visible = useMemo(
     () => sheetItems.filter((i) => !hidden.has(i.name) && (!onlyOpen || !work.get(i.uid)?.done)),
     [sheetItems, hidden, onlyOpen, work],
@@ -100,8 +112,18 @@ export function PlanViewer({
     try { localStorage.setItem(storageKey, sheet?.number ?? ''); } catch { /* ignore */ }
     setSel(new Set());
     setTip(null);
+    setIssueTip(null);
     requestAnimationFrame(fit);
   }, [sheet?.number]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const centerOn = (x: number, y: number) => {
+    const vp = vpRef.current;
+    if (!vp) return;
+    setView((v) => {
+      const s = Math.max(v.s, 0.6);
+      return { s, x: vp.clientWidth / 2 - x * s, y: vp.clientHeight / 2 - y * s };
+    });
+  };
 
   const zoomAt = (factor: number, cx: number, cy: number) =>
     setView((v) => {
@@ -240,6 +262,20 @@ export function PlanViewer({
       }
       return;
     }
+    const iid = (target as SVGElement | null)?.dataset?.issue;
+    const issue = iid ? sheetIssues.find((x) => x.id === iid) : undefined;
+    if (issue) {
+      setTip(null);
+      setIssueTip({ issue, x: cx, y: cy });
+      return;
+    }
+    setIssueTip(null);
+    if (tool === 'issue') {
+      const [x, y] = toPlan(cx, cy);
+      setIssueNote('');
+      setIssueAt({ x, y });
+      return;
+    }
     const id = (target as SVGElement | null)?.dataset?.id;
     const item = id ? sheetItems.find((i) => i.id === id) : undefined;
     if (tool === 'add' && !item) {
@@ -262,11 +298,20 @@ export function PlanViewer({
 
   const act = async (done: boolean) => {
     try {
-      const n = await mark.mutateAsync({ uids: [...sel], done });
-      showToast(done ? 'Marked done' : 'Marked not done', `${n} device${n === 1 ? '' : 's'}`);
+      await mark.mutateAsync({ uids: [...sel], done });
       setSel(new Set());
     } catch (err) {
       showToast('Could not save', errorMessage(err, 'Try again.'));
+    }
+  };
+
+  const saveIssue = async () => {
+    if (!issueAt || !sheet) return;
+    try {
+      await addIssue.mutateAsync({ sheet: sheet.number, x: Math.round(issueAt.x), y: Math.round(issueAt.y), note: issueNote.trim() || null });
+      setIssueAt(null);
+    } catch (err) {
+      showToast('Could not save the problem', errorMessage(err, 'Try again.'));
     }
   };
 
@@ -275,7 +320,6 @@ export function PlanViewer({
     const near = sheetItems.reduce<PlanItem | null>((b, i) => (!b || Math.hypot(i.x - addAt.x, i.y - addAt.y) < Math.hypot(b.x - addAt.x, b.y - addAt.y) ? i : b), null);
     try {
       await addItem.mutateAsync({ versionId, sheet: sheet.number, cls: addCls, x: Math.round(addAt.x), y: Math.round(addAt.y), room: near && Math.hypot(near.x - addAt.x, near.y - addAt.y) < 120 ? near.room : '' });
-      showToast('Device added', CLASSES[addCls] ?? addCls);
       setAddAt(null);
     } catch (err) {
       showToast('Could not add', errorMessage(err, 'Try again.'));
@@ -386,12 +430,21 @@ export function PlanViewer({
               })}
               {rect && <rect x={rect[0]} y={rect[1]} width={rect[2]} height={rect[3]} fill="rgba(245,158,11,0.12)" stroke="#f59e0b" strokeWidth={2 / view.s} />}
               {addAt && <circle cx={addAt.x} cy={addAt.y} r={r * 1.3} fill="none" stroke="#2563eb" strokeWidth={3} strokeDasharray="4 3" />}
+              {sheetIssues.filter((x) => x.status === 'open').map((x) => (
+                <g key={x.id}>
+                  <circle cx={x.x} cy={x.y} r={r * 1.9} fill={ISSUE} fillOpacity={0.18} stroke={ISSUE} strokeWidth={4} />
+                  <text x={x.x} y={x.y} textAnchor="middle" dominantBaseline="central" fontSize={r * 1.9} fontWeight={800} fill={ISSUE} style={{ pointerEvents: 'none' }}>!</text>
+                  <circle data-issue={x.id} cx={x.x} cy={x.y} r={Math.max(r * 2.2, 18 / view.s)} fill="transparent" style={{ cursor: 'pointer' }} />
+                </g>
+              ))}
+              {issueAt && <circle cx={issueAt.x} cy={issueAt.y} r={r * 1.9} fill={ISSUE} fillOpacity={0.18} stroke={ISSUE} strokeWidth={4} strokeDasharray="6 4" />}
             </svg>
           </div>
 
           <div data-ui className="absolute left-2 top-2 flex gap-1">
             <ToolButton on={tool === 'pan'} onClick={() => setTool('pan')} icon={<Hand className="h-4 w-4" />} label="Move" />
             <ToolButton on={tool === 'select'} onClick={() => setTool('select')} icon={<MousePointer2 className="h-4 w-4" />} label="Select" />
+            <ToolButton on={tool === 'issue'} onClick={() => setTool('issue')} icon={<AlertCircle className="h-4 w-4 text-red-600" />} label="Problem" />
             {isOwner && <ToolButton on={tool === 'add'} onClick={() => setTool('add')} icon={<Plus className="h-4 w-4" />} label="Add device" />}
             {isOwner && <ToolButton on={tool === 'draw'} onClick={() => setTool('draw')} icon={<Pencil className="h-4 w-4" />} label="Draw" />}
             {isOwner && sheetDrawings.length > 0 && <ToolButton on={tool === 'erase'} onClick={() => setTool('erase')} icon={<Eraser className="h-4 w-4" />} label="Erase" />}
@@ -448,6 +501,11 @@ export function PlanViewer({
               Tap a line to delete it
             </div>
           )}
+          {tool === 'issue' && (
+            <div data-ui className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-white/90 px-3 py-1.5 text-xs text-ink-muted shadow">
+              Tap the plan where the problem is
+            </div>
+          )}
           {tool === 'add' && (
             <div data-ui className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg bg-white/90 px-3 py-1.5 text-xs text-ink-muted shadow">
               Tap the plan where the missing device is
@@ -476,6 +534,33 @@ export function PlanViewer({
             <span className="tabular-nums text-ink-muted">{c.done}/{c.total}</span>
           </label>
         ))}
+        {sheetIssues.length > 0 && (
+          <>
+            <h3 className="mb-1 mt-4 flex items-center gap-1.5 text-sm font-semibold text-ink">
+              <AlertCircle className="h-4 w-4 text-red-600" /> Problems
+              <span className="font-normal text-ink-subtle">({sheetIssues.filter((x) => x.status === 'open').length} open)</span>
+            </h3>
+            {sheetIssues.map((x) => (
+              <div key={x.id} className={`border-b border-navy-100 py-1.5 text-sm ${x.status === 'fixed' ? 'opacity-60' : ''}`}>
+                <button type="button" className="block w-full text-left" onClick={() => centerOn(x.x, x.y)}>
+                  <span className={x.status === 'fixed' ? 'text-ink line-through' : 'text-ink'}>{x.note || 'Problem (no note)'}</span>
+                  <span className="block text-xs text-ink-muted">
+                    {x.author?.full_name ?? 'Someone'} · {formatDate(x.created_at, timezone)}
+                    {x.status === 'fixed' && ` · fixed${x.fixer ? ` by ${x.fixer.full_name}` : ''}`}
+                  </span>
+                </button>
+                <div className="mt-1 flex gap-3 text-xs">
+                  <button type="button" className="font-medium text-emerald-700 underline" onClick={() => setIssue.mutate({ id: x.id, fixed: x.status !== 'fixed' })}>
+                    {x.status === 'fixed' ? 'Open again' : 'Mark fixed'}
+                  </button>
+                  {(isOwner || x.created_by === userId) && (
+                    <button type="button" className="text-red-600 underline" onClick={() => delIssue.mutate(x.id)}>Delete</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
         <h3 className="mb-1 mt-4 text-sm font-semibold text-ink">Rooms <span className="font-normal text-ink-subtle">(tap to select all)</span></h3>
         {rooms.map(([room, c]) => (
           <button
@@ -524,7 +609,6 @@ export function PlanViewer({
                 onClick={async () => {
                   await delItem.mutateAsync(tip.item.id);
                   setTip(null);
-                  showToast('Device removed', tip.item.name);
                 }}
               >
                 <Trash2 className="h-3 w-3" /> Remove (wrong)
@@ -533,6 +617,31 @@ export function PlanViewer({
           </div>
         </div>
       )}
+
+      {issueTip && (
+        <div className="fixed z-50 max-w-[280px] rounded-lg bg-white px-3 py-2 text-sm text-ink shadow-lg ring-2 ring-red-500" style={{ left: Math.max(8, Math.min(issueTip.x + 12, window.innerWidth - 290)), top: Math.min(issueTip.y + 12, window.innerHeight - 170) }}>
+          <p className="flex items-center gap-1.5 font-semibold text-red-700"><AlertCircle className="h-4 w-4" /> Problem</p>
+          <p className="mt-1 whitespace-pre-wrap">{issueTip.issue.note || 'No note'}</p>
+          <p className="mt-1 text-xs text-ink-muted">{issueTip.issue.author?.full_name ?? 'Someone'} · {formatDate(issueTip.issue.created_at, timezone)} · {formatTime(issueTip.issue.created_at, timezone)}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="success" icon={<Check className="h-4 w-4" />} onClick={() => { setIssue.mutate({ id: issueTip.issue.id, fixed: true }); setIssueTip(null); }}>Fixed</Button>
+            {(isOwner || issueTip.issue.created_by === userId) && (
+              <Button size="sm" variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => { delIssue.mutate(issueTip.issue.id); setIssueTip(null); }}>Delete</Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setIssueTip(null)}>Close</Button>
+          </div>
+        </div>
+      )}
+
+      <Modal open={!!issueAt} onClose={() => setIssueAt(null)} title="Mark a problem">
+        <div className="space-y-3">
+          <Textarea aria-label="What is wrong?" rows={3} autoFocus value={issueNote} onChange={(e) => setIssueNote(e.target.value)} placeholder="e.g. Outlet missing, box in the wrong place, damaged…" />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setIssueAt(null)}>Cancel</Button>
+            <Button variant="danger" icon={<AlertCircle className="h-4 w-4" />} loading={addIssue.isPending} onClick={saveIssue}>Mark problem</Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={!!addAt} onClose={() => setAddAt(null)} title="Add a missing device">
         <div className="space-y-3">
