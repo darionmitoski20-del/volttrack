@@ -240,34 +240,6 @@ export function SettingsPage() {
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-1.5">
-                Overtime
-                <InfoTooltip text="Hours beyond the weekly threshold count as overtime, are paid at the multiplier, and trigger an alert on the dashboard." />
-              </CardTitle>
-            </CardHeader>
-            <CardBody>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <FormField label="Weekly threshold (hours)" htmlFor="ot-hours">
-                  <Select id="ot-hours" {...register('overtime_alert_hours')}>
-                    {[35, 38, 40, 42, 45, 48, 50, 55, 60].map((h) => (
-                      <option key={h} value={h}>{h} hours</option>
-                    ))}
-                  </Select>
-                </FormField>
-                <FormField label="Overtime pay multiplier" htmlFor="ot-mult">
-                  <Select id="ot-mult" {...register('ot_multiplier')}>
-                    <option value="1">1× (no extra pay)</option>
-                    <option value="1.25">1.25×</option>
-                    <option value="1.5">1.5× (standard)</option>
-                    <option value="2">2×</option>
-                  </Select>
-                </FormField>
-              </div>
-            </CardBody>
-          </Card>
-
           <div className="flex justify-end pt-1">
             <Button type="submit" variant="primary" loading={isSubmitting} disabled={!isDirty}>
               Save changes
